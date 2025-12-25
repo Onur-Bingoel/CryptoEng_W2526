@@ -1,0 +1,11 @@
+[package]
+name = "hkdf_extract_expand_multi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hkdf = "0.12"
+sha2 = "0.10"
+anyhow = "1.0"
+base64 = "0.21"
+hex = "0.4"

@@ -1,0 +1,10 @@
+[package]
+name = "hmac_sample"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hmac = "0.12"
+sha3 = "0.10"
+base64 = "0.21"
+rand = "0.8"

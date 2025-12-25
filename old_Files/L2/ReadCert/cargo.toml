@@ -1,0 +1,12 @@
+[package]
+name = "x509_reader_mod"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+x509-parser = "0.16"
+pem = "3"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.21"
+anyhow = "1.0"

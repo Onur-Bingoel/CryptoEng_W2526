@@ -1,0 +1,14 @@
+[package]
+name = "ecdsademo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+k256 = { version = "0.13", features = ["arithmetic"] }
+sha2 = "0.10"
+rand = "0.8"
+base64 = "0.21"   # optional: nice printing
+hex = "0.4"
+anyhow = "1.0"
+rand_core = "0.9.3"
+crypto-bigint = "0.5"
