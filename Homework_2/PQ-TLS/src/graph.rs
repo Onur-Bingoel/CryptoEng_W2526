@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use image::{Rgb, RgbImage};
 use imageproc::drawing::{draw_line_segment_mut, draw_text_mut};
-use ab_glyph::{FontArc, PxScale};
+use ab_glyph::{Font, FontArc, PxScale, ScaleFont};
 
 #[derive(Clone, Copy)]
 pub struct Point {
@@ -39,20 +39,40 @@ pub fn render_graph(graph: &Graph, path: &str) {
 
     let font = FontArc::try_from_slice(FONT_DATA).expect("Font not found");
     let scale = PxScale::from(14.0);
+    let scaled = font.as_scaled(scale);
 
-    for (from, to, title) in &graph.arrows {
+    for (idx, (from, to, title)) in graph.arrows.iter().enumerate() {
         let a = graph.positions[from];
         let b = graph.positions[to];
+        let offset = (idx as i32) * 20;
 
-        draw_line_segment_mut(
-            &mut img,
-            (a.x as f32, a.y as f32),
-            (b.x as f32, b.y as f32),
-            Rgb([0, 0, 0]),
-        );
+        let ay = a.y + offset;
+        let by = b.y + offset;
 
-        let mid_x = ((a.x + b.x) / 2) as i32;
-        let mid_y = ((a.y + b.y) / 2) as i32;
+        draw_line_segment_mut(&mut img, (a.x as f32, ay as f32), (b.x as f32, by as f32), Rgb([0, 0, 0]));
+
+        let dx = (b.x - a.x) as f32;
+        let dy = (by - ay) as f32;
+        let len = (dx * dx + dy * dy).sqrt().max(1.0);
+        let ux = dx / len;
+        let uy = dy / len;
+        let head_len = 12.0;
+        let head_w = 6.0;
+
+        let tip = (b.x as f32, by as f32);
+        let base = (b.x as f32 - ux * head_len, by as f32 - uy * head_len);
+        let left = (base.0 - uy * head_w, base.1 + ux * head_w);
+        let right = (base.0 + uy * head_w, base.1 - ux * head_w);
+        draw_line_segment_mut(&mut img, tip, left, Rgb([0, 0, 0]));
+        draw_line_segment_mut(&mut img, tip, right, Rgb([0, 0, 0]));
+
+        // Text mittig auf der Linie platzieren
+        let text_width: f32 = title.chars().map(|c| {
+            let gid = scaled.glyph_id(c);
+            scaled.h_advance(gid)
+        }).sum();
+        let mid_x = ((a.x + b.x) as f32 / 2.0 - text_width / 2.0) as i32;
+        let mid_y = ((ay + by) / 2) as i32;
         draw_text_mut(&mut img, Rgb([0, 0, 255]), mid_x, mid_y, scale, &font, title);
     }
 

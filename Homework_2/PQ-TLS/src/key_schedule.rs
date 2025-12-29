@@ -20,59 +20,49 @@ pub fn expand<const N: usize>(hk: &Hkdfsha256, info: &[u8]) -> Result<[u8; N], h
     Ok(out)
 }
 
-/// SHA-256-Digest als 32-Byte-Array
-pub fn sha256_digest(data: &[u8]) -> [u8; KEY_LEN] {
-    let mut out = [0u8; KEY_LEN];
-    out.copy_from_slice(&Sha256::digest(data));
-    out
-}
-
-/// Entspricht derive_hs aus dem Python-Code
-pub fn derive_hs(shared_key: &[u8]) -> Result<Hkdfsha256, hkdf::InvalidLength> {
+pub fn derive_hs(shared_key: &[u8]) -> (hmac::digest::Output<Sha256>, Hkdfsha256) {
     let zero = [0u8; KEY_LEN];
-    let (_, es) = extract(Some(&zero), &zero);
-    let d_es = expand::<KEY_LEN>(&es, &sha256_digest(b"DerivedES"))?;
-    let (_, hs) = extract(Some(&d_es), &sha256_digest(shared_key));
-    Ok(hs)
+    let (_es_prk, es_hk) = extract(Some(&zero), &zero);
+    let d_es = expand::<KEY_LEN>(&es_hk, &Sha256::digest(b"DerivedES")).unwrap();
+    let (hs_prk, hs_hk) = extract(Some(&d_es), Sha256::digest(shared_key).as_slice());
+    (hs_prk, hs_hk)
 }
 
-/// Entspricht key_schedule_1
-pub fn key_schedule_1(shared_key: &[u8]) -> Result<([u8; KEY_LEN], [u8; KEY_LEN]), hkdf::InvalidLength> {
-    let hs = derive_hs(shared_key)?;
-    let k_c = expand::<KEY_LEN>(&hs, &sha256_digest(b"ClientKE"))?;
-    let k_s = expand::<KEY_LEN>(&hs, &sha256_digest(b"ServerKE"))?;
-    Ok((k_c, k_s))
+pub fn key_schedule_1(shared_key: &[u8]) -> ([u8; KEY_LEN], [u8; KEY_LEN]) {
+    let (_, hs_hk) = derive_hs(shared_key);
+    let k_c = expand::<KEY_LEN>(&hs_hk, b"ClientKE").unwrap();
+    let k_s = expand::<KEY_LEN>(&hs_hk, b"ServerKE").unwrap();
+    (k_c, k_s)
 }
 
-/// Entspricht key_schedule_2
 pub fn key_schedule_2(
     nonce_c: &[u8],
     pk_c: &[u8],
     nonce_s: &[u8],
     pk_s: &[u8],
     shared_key: &[u8],
-) -> Result<([u8; KEY_LEN], [u8; KEY_LEN]), hkdf::InvalidLength> {
-    let hs = derive_hs(shared_key)?;
-    let mut client_info = Vec::new();
-    client_info.extend_from_slice(nonce_c);
-    client_info.extend_from_slice(pk_c);
-    client_info.extend_from_slice(nonce_s);
-    client_info.extend_from_slice(pk_s);
-    client_info.extend_from_slice(b"ClientKC");
+) -> ([u8; KEY_LEN], [u8; KEY_LEN]) {
+    let (_, hs_hk) = derive_hs(shared_key);
 
-    let mut server_info = Vec::new();
-    server_info.extend_from_slice(nonce_c);
-    server_info.extend_from_slice(pk_c);
-    server_info.extend_from_slice(nonce_s);
-    server_info.extend_from_slice(pk_s);
-    server_info.extend_from_slice(b"ServerKC");
+    let mut buf = Vec::new();
+    buf.extend_from_slice(nonce_c);
+    buf.extend_from_slice(pk_c);
+    buf.extend_from_slice(nonce_s);
+    buf.extend_from_slice(pk_s);
 
-    let k_c = expand::<KEY_LEN>(&hs, &sha256_digest(&client_info))?;
-    let k_s = expand::<KEY_LEN>(&hs, &sha256_digest(&server_info))?;
-    Ok((k_c, k_s))
+    let mut client_buf = buf.clone();
+    client_buf.extend_from_slice(b"ClientKC");
+    let client_kc = Sha256::digest(&client_buf);
+
+    let mut server_buf = buf;
+    server_buf.extend_from_slice(b"ServerKC");
+    let server_kc = Sha256::digest(&server_buf);
+
+    let k_c = expand::<KEY_LEN>(&hs_hk, &client_kc).unwrap();
+    let k_s = expand::<KEY_LEN>(&hs_hk, &server_kc).unwrap();
+    (k_c, k_s)
 }
 
-/// Entspricht key_schedule_3
 pub fn key_schedule_3(
     nonce_c: &[u8],
     pk_c: &[u8],
@@ -82,32 +72,31 @@ pub fn key_schedule_3(
     sign: &[u8],
     cert_pk_s: &[u8],
     mac_s: &[u8],
-) -> Result<([u8; KEY_LEN], [u8; KEY_LEN]), hkdf::InvalidLength> {
-    let hs = derive_hs(shared_key)?;
-    let d_hs = expand::<KEY_LEN>(&hs, &sha256_digest(b"DerivedHS"))?;
-    let (_, ms) = extract(Some(&d_hs), &[0u8; KEY_LEN]);
+) -> ([u8; KEY_LEN], [u8; KEY_LEN]) {
+    let (_, hs_hk) = derive_hs(shared_key);
+    let d_hs = expand::<KEY_LEN>(&hs_hk, &Sha256::digest(b"DerivedHS")).unwrap();
+    let zero = [0u8; KEY_LEN];
+    let (_, ms_hk) = extract(Some(&d_hs), &zero);
 
-    let mut client_info = Vec::new();
-    client_info.extend_from_slice(nonce_c);
-    client_info.extend_from_slice(pk_c);
-    client_info.extend_from_slice(nonce_s);
-    client_info.extend_from_slice(pk_s);
-    client_info.extend_from_slice(sign);
-    client_info.extend_from_slice(cert_pk_s);
-    client_info.extend_from_slice(mac_s);
-    client_info.extend_from_slice(b"ClientEncK");
+    let mut buf = Vec::new();
+    buf.extend_from_slice(nonce_c);
+    buf.extend_from_slice(pk_c);
+    buf.extend_from_slice(nonce_s);
+    buf.extend_from_slice(pk_s);
+    buf.extend_from_slice(sign);
+    buf.extend_from_slice(cert_pk_s);
+    buf.extend_from_slice(mac_s);
 
-    let mut server_info = Vec::new();
-    server_info.extend_from_slice(nonce_c);
-    server_info.extend_from_slice(pk_c);
-    server_info.extend_from_slice(nonce_s);
-    server_info.extend_from_slice(pk_s);
-    server_info.extend_from_slice(sign);
-    server_info.extend_from_slice(cert_pk_s);
-    server_info.extend_from_slice(mac_s);
-    server_info.extend_from_slice(b"ServerKC");
 
-    let k_c = expand::<KEY_LEN>(&ms, &sha256_digest(&client_info))?;
-    let k_s = expand::<KEY_LEN>(&ms, &sha256_digest(&server_info))?;
-    Ok((k_c, k_s))
+    let mut client_buf = buf.clone();
+    client_buf.extend_from_slice(b"ClientEncK");
+    let client_skh = Sha256::digest(&client_buf);
+
+    let mut server_buf = buf;
+    server_buf.extend_from_slice(b"ServerEncK");
+    let server_skh = Sha256::digest(&server_buf);
+
+    let k_c = expand::<KEY_LEN>(&ms_hk, &client_skh).unwrap();
+    let k_s = expand::<KEY_LEN>(&ms_hk, &server_skh).unwrap();
+    (k_c, k_s)
 }
