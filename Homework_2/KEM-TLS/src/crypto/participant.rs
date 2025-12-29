@@ -1,4 +1,4 @@
-use crate::graph::{Graph, Point};
+use crate::crypto::graph::{Graph, Point};
 use crypto_bigint::rand_core::RngCore;
 use ml_dsa::{signature::{Signer}, KeyGen, KeyPair, MlDsa65, Seed, Signature, SigningKey, VerifyingKey};
 use rand::rngs::ThreadRng;

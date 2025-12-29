@@ -4,15 +4,12 @@ use ml_dsa::signature::{Signer, Verifier};
 use ml_kem::{KemCore, MlKem768};
 use sha2::{Digest, Sha256};
 use std::thread;
-use crate::graph::render_graph;
-use crate::hmac::{compute_hmac, verify_hmac};
-use crate::key_schedule::{key_schedule_1, key_schedule_2, key_schedule_3};
-use crate::participant::{User};
-mod participant;
-mod graph;
-mod key_schedule;
-mod hmac;
-mod aead;
+use crate::crypto::{graph, participant};
+use crate::crypto::graph::render_graph;
+use crate::crypto::hmac::{compute_hmac, verify_hmac};
+use crate::crypto::key_schedule::{key_schedule_1, key_schedule_2, key_schedule_3};
+use crate::crypto::participant::{User};
+mod crypto;
 
 fn main() {
     thread::Builder::new()
@@ -112,7 +109,7 @@ fn run() {
     google_ad.extend_from_slice(b",");
     google_ad.extend_from_slice(google.verifying_key().encode().as_bytes());
 
-    let cypher_text_1: Vec<u8> = match aead::encrypt(&google_k1_s, &nonce, msg.as_bytes(), &google_ad) {
+    let cypher_text_1: Vec<u8> = match crypto::aead::encrypt(&google_k1_s, &nonce, msg.as_bytes(), &google_ad) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Encrypt error: {e}");
@@ -138,7 +135,7 @@ fn run() {
     alice_ad.extend_from_slice(alice.verifying_key().encode().as_bytes());
     alice_ad.extend_from_slice(b",");
     alice_ad.extend_from_slice(alice_verifying_key_from_google.encode().as_bytes());
-    let decrypted_msg_1: Vec<u8> = match aead::decrypt(&alice_k1_s, &nonce, &cypher_text_1, &alice_ad) {
+    let decrypted_msg_1: Vec<u8> = match crypto::aead::decrypt(&alice_k1_s, &nonce, &cypher_text_1, &alice_ad) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
@@ -201,7 +198,7 @@ fn run() {
 
     alice.send_message("AEAD(k1_c, {{alice_mac_c}})".to_string(), google.id(), &mut graph);
     println!("--- Sending AEAD(k1_c, {{alice_mac_c}}) from Alice to Google ---");
-    let cypher_text_2: Vec<u8> = match aead::encrypt(&alice_k1_c, &nonce, alice_mac_c.as_bytes(), &alice_ad) {
+    let cypher_text_2: Vec<u8> = match crypto::aead::encrypt(&alice_k1_c, &nonce, alice_mac_c.as_bytes(), &alice_ad) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Encrypt error: {e}");
@@ -212,7 +209,7 @@ fn run() {
 // Google ---------------------------------------------------------------------------------------------------
 
     // Decrypt the received AEAD message
-    let decrypted_msg_2: Vec<u8> = match aead::decrypt(&google_k1_c, &nonce, &cypher_text_2, &google_ad) {
+    let decrypted_msg_2: Vec<u8> = match crypto::aead::decrypt(&google_k1_c, &nonce, &cypher_text_2, &google_ad) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
