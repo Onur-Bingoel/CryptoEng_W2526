@@ -183,8 +183,8 @@ fn run() {
     expected_mac_s_input.extend_from_slice(alice_cert_from_google.as_bytes());
     expected_mac_s_input.extend_from_slice(b"ServerMAC");
 
-    assert!(alice_verifying_key_from_google.verify(&Sha256::digest(&expected_sign_msg), &google_sign).is_ok());
-    assert!(ca.verifying_key().verify(alice_verifying_key_from_google.encode().as_bytes(), &google_cert).is_ok());
+    assert!(alice_verifying_key_from_google.verify(&Sha256::digest(&expected_sign_msg), &google_sign).is_ok());     // TODO: google_sign should be alice_sign_from_google
+    assert!(ca.verifying_key().verify(alice_verifying_key_from_google.encode().as_bytes(), &google_cert).is_ok());  // TODO: google_cert should be alice_cert_from_google
     assert!(verify_hmac(&alice_k2_s, &Sha256::digest(&expected_mac_s_input), alice_mac_from_google.as_bytes()));
 
     // Generate MAC
