@@ -21,6 +21,7 @@ fn main() {
 }
 
 // TODO: pk and sk don't correctly get used, because they are from dsa while shared secret is from ml_kem
+// TODO: Sign should be Sign(X,Y) (slide 21); The combination of two keypairs is a Issue
 fn run() {
     let mut graph = graph::Graph::new();
     let mut rng = rand::thread_rng();
@@ -194,7 +195,7 @@ fn run() {
     mac_c_input.extend_from_slice(alice_cert_from_google.as_bytes());
     mac_c_input.extend_from_slice(b"ClientMAC");
 
-    let alice_mac_c = compute_hmac(&google_k2_s, &Sha256::digest(&mac_c_input));
+    let alice_mac_c = compute_hmac(&alice_k2_c, &Sha256::digest(&mac_c_input));
 
     alice.send_message("AEAD(k1_c, {{alice_mac_c}})".to_string(), google.id(), &mut graph);
     println!("--- Sending AEAD(k1_c, {{alice_mac_c}}) from Alice to Google ---");
@@ -227,7 +228,7 @@ fn run() {
     expected_mac_c_input.extend_from_slice(google_cert.encode().as_bytes());
     expected_mac_c_input.extend_from_slice(b"ClientMAC");
 
-    assert!(verify_hmac(&google_k2_s, &Sha256::digest(&expected_mac_c_input), decrypted_msg_2.as_bytes()));
+    assert!(verify_hmac(&google_k2_c, &Sha256::digest(&expected_mac_c_input), decrypted_msg_2.as_bytes()));
 
 // END ---------------------------------------------------------------------------------------------------
     // Verify that both sides derived the same keys
