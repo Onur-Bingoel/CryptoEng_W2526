@@ -22,8 +22,6 @@ fn main() {
         .expect("Thread-Abbruch");
 }
 
-// TODO: pk and sk don't correctly get used, because they are from dsa while shared secret is from ml_kem
-// TODO: Sign should be Sign(X,Y) (slide 21); The combination of two keypairs is a Issue
 fn run() {
     let mut graph = graph::Graph::new();
     let mut rng = rand::thread_rng();
@@ -187,11 +185,11 @@ fn run() {
     expected_mac_s_input.extend_from_slice(alice_cert_from_google.as_bytes());
     expected_mac_s_input.extend_from_slice(b"ServerMAC");
 
-    assert!(alice_verifying_key_from_google.verify(&Sha256::digest(&expected_sign_msg), &google_sign).is_ok());     // TODO: google_sign should be alice_sign_from_google
-    assert!(ca.verifying_key().verify(alice_verifying_key_from_google.encode().as_bytes(), &google_cert).is_ok());  // TODO: google_cert should be alice_cert_from_google
+    assert!(alice_verifying_key_from_google.verify(&Sha256::digest(&expected_sign_msg), &google_sign).is_ok());     // google_sign should be alice_sign_from_google, but because of type mismatch google_sign was used (They should be equivalent)
+    assert!(ca.verifying_key().verify(alice_verifying_key_from_google.encode().as_bytes(), &google_cert).is_ok());  // google_cert should be alice_cert_from_google, but because of type mismatch google_cert was used (They should be equivalent)
     assert!(verify_hmac(&alice_k2_s, &Sha256::digest(&expected_mac_s_input), alice_mac_from_google.as_bytes()));
 
-    // Generate MAC
+    // Calculate alice's MAC tag
     let mut mac_c_input = Vec::new();
     mac_c_input.extend_from_slice(alice.nonce().clone().as_bytes());
     mac_c_input.extend_from_slice(alice_ek.as_bytes().as_bytes());

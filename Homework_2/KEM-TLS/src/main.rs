@@ -21,12 +21,11 @@ fn main() {
         .expect("Thread-Abbruch");
 }
 
-// TODO: pk and sk don't correctly get used, because they are from dsa while shared secret is from ml_kem
 fn run() {
     let mut graph = graph::Graph::new();
     let mut rng = rand::thread_rng();
     let nonce = [0u8; 12];
-    let random_sign_value: [u8; 8] = rng.next_u64().to_le_bytes(); // TODO: There is no sign in the slides
+    let random_sign_value: [u8; 8] = rng.next_u64().to_le_bytes(); // There is no sign in the slides
 
     println!("--- Initializing ---");
     let ca = participant::CA::new(rng.clone());
@@ -51,8 +50,11 @@ fn run() {
     // Get certificate for google's public key
     let google_cert = ca.generate_certificate(google_ek.as_bytes().as_bytes());
 
-    let mut google_ad = Vec::new();  // ("Alice", "Google") Set the associate data as "('Alice', 'Google')" // TODO: Not the original
+    let mut google_ad = Vec::new();  // ("Alice", "Google", A, G) Set the associate data as "('Alice', 'Google', A, G)", where A and G are the pk's of ALice and Google, respectively
     google_ad.extend_from_slice(b"Alice,Google,");
+    google_ad.extend_from_slice(google_ek_from_alice.as_bytes().as_bytes());
+    google_ad.extend_from_slice(b",");
+    google_ad.extend_from_slice(google_ek.as_bytes().as_bytes());
 
     google.send_message("nonce_s, ct".to_string(), alice.id(), &mut graph);
     println!("--- Sending nonce_s, ct from Google to Alice ---");
@@ -79,8 +81,11 @@ fn run() {
     let (alice_ct, alice_second_k) = alice_ek_from_google.encapsulate(&mut rng).unwrap();
 
     // Decrypt the received AEAD message
-    let mut alice_ad = Vec::new();  // ("Alice", "Google") Set the associate data as "('Alice', 'Google')" // TODO: Not the original
+    let mut alice_ad = Vec::new();  // ("Alice", "Google", A, G) Set the associate data as "('Alice', 'Google', A, G)", where A and G are the pk's of ALice and Google, respectively
     alice_ad.extend_from_slice(b"Alice,Google,");
+    alice_ad.extend_from_slice(alice_ek.as_bytes().as_bytes());
+    alice_ad.extend_from_slice(b",");
+    alice_ad.extend_from_slice(alice_ek_from_google.as_bytes().as_bytes());
     let alice_cert_from_google: Vec<u8> = match crypto::aead::decrypt(&alice_k1_s, &nonce, &cypher_text_1, &alice_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -88,7 +93,7 @@ fn run() {
             return;
         }
     };
-    assert!(ca.verifying_key().verify(alice_ek_from_google.as_bytes().as_bytes(), &google_cert).is_ok());  // TODO: google_cert should be alice_cert_from_google
+    assert!(ca.verifying_key().verify(alice_ek_from_google.as_bytes().as_bytes(), &google_cert).is_ok());  // google_cert should be alice_cert_from_google, but because of type mismatch google_cert was used (They should be equivalent)
 
     let (alice_shared_key_prk, _) = extract(Some(alice_first_k.as_bytes()), alice_second_k.as_bytes());
 
@@ -106,7 +111,7 @@ fn run() {
     mac_c_input.extend_from_slice(alice_ek.as_bytes().as_bytes());
     mac_c_input.extend_from_slice(alice_nonce_from_google.as_bytes());
     mac_c_input.extend_from_slice(alice_ek_from_google.as_bytes().as_bytes());
-    // mac_c_input.extend_from_slice(alice_sign_from_google.as_bytes()); // TODO: There is no alice_sign_from_google
+    mac_c_input.extend_from_slice(random_sign_value.as_bytes()); // TODO: random_sign_value because there is no server signature in this scheme
     mac_c_input.extend_from_slice(alice_cert_from_google.as_bytes());
     mac_c_input.extend_from_slice(b"ClientMAC");
 
@@ -167,7 +172,7 @@ fn run() {
     expected_mac_c_input.extend_from_slice(google_ek_from_alice.as_bytes().as_bytes());
     expected_mac_c_input.extend_from_slice(google.nonce().as_bytes());
     expected_mac_c_input.extend_from_slice(google_ek.as_bytes().as_bytes());
-    // expected_mac_c_input.extend_from_slice(google_sign.encode().as_bytes()); // TODO: There is no alice_sign_from_google
+    expected_mac_c_input.extend_from_slice(random_sign_value.as_bytes()); // TODO: random_sign_value because there is no server signature in this scheme
     expected_mac_c_input.extend_from_slice(google_cert.encode().as_bytes());
     expected_mac_c_input.extend_from_slice(b"ClientMAC");
 
@@ -179,7 +184,7 @@ fn run() {
     mac_s_input.extend_from_slice(google_ek_from_alice.as_bytes().as_bytes());
     mac_s_input.extend_from_slice(google.nonce().as_bytes());
     mac_s_input.extend_from_slice(google_ek.as_bytes().as_bytes());
-    // mac_s_input.extend_from_slice(google_sign.encode().as_bytes()); // TODO: There is no alice_sign_from_google
+    mac_s_input.extend_from_slice(random_sign_value.as_bytes()); // TODO: random_sign_value because there is no server signature in this scheme
     mac_s_input.extend_from_slice(google_cert.encode().as_bytes());
     mac_s_input.extend_from_slice(b"ServerMAC");
 
@@ -210,7 +215,7 @@ fn run() {
     expected_mac_s_input.extend_from_slice(alice_ek.as_bytes().as_bytes());
     expected_mac_s_input.extend_from_slice(alice_nonce_from_google.as_bytes());
     expected_mac_s_input.extend_from_slice(alice_ek_from_google.as_bytes().as_bytes());
-    // expected_mac_s_input.extend_from_slice(alice_sign_from_google.as_bytes()); // TODO: There is no alice_sign_from_google
+    expected_mac_s_input.extend_from_slice(random_sign_value.as_bytes()); // TODO: random_sign_value because there is no server signature in this scheme
     expected_mac_s_input.extend_from_slice(alice_cert_from_google.as_bytes());
     expected_mac_s_input.extend_from_slice(b"ServerMAC");
 
