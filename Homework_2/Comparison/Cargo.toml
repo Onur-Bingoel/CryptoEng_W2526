@@ -1,0 +1,8 @@
+[package]
+name = "Comparison"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+kem_tls = { path = "../kem-tls", package = "kem-tls" }
+pq_tls  = { path = "../pq-tls",  package = "pq-tls" }

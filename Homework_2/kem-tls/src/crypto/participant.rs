@@ -20,7 +20,8 @@ impl User {
         self.nonce.clone()
     }
 
-    pub fn send_message(&self, title: String, target_name: String) {
+    pub fn send_message(&self, title: String, target_name: String, silent: bool) {
+        if silent { return; }
         let self_name = self.name.clone();
         println!("--- Sending {title} from {self_name} to {target_name} ---");
     }
