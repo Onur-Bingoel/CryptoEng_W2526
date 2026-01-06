@@ -11,6 +11,30 @@ use ml_kem::Ciphertext;
 use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
 use sha2::{Digest, Sha256};
 
+
+/*
+
+=== pq-tls Handshake ===
+Runs: 50
+Mean time:   79.585586 ms
+Median time: 69.850300 ms
+Std dev:     27.451434 ms
+Min time:    48.113800 ms
+Max time:    189.102600 ms
+
+=== kem-tls Handshake ===
+Runs: 50
+Mean time:   50.353644 ms
+Median time: 41.174400 ms
+Std dev:     24.739401 ms
+Min time:    32.961600 ms
+Max time:    144.388300 ms
+
+=== Relative Comparison ===
+pq-tls / kem-tls mean time ratio: 1.58x
+kem-tls is faster on average.
+
+ */
 pub fn run(silent: bool) {
     let mut rng = rand::thread_rng();
     let nonce = [0u8; 12];
