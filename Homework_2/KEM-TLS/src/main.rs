@@ -1,15 +1,16 @@
-use image::EncodableLayout;
-use kem::{Decapsulate, Encapsulate};
-use ml_dsa::signature::{Verifier};
-use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
-use sha2::{Digest, Sha256};
-use std::thread;
-use aead::rand_core::RngCore;
-use crate::crypto::{graph, participant};
 use crate::crypto::graph::render_graph;
 use crate::crypto::hmac::{compute_hmac, verify_hmac};
 use crate::crypto::key_schedule::{extract, key_schedule_1, key_schedule_2, key_schedule_3};
-use crate::crypto::participant::{User};
+use crate::crypto::participant::User;
+use crate::crypto::{graph, participant};
+use aead::rand_core::RngCore;
+use image::EncodableLayout;
+use kem::{Decapsulate, Encapsulate};
+use ml_dsa::signature::Verifier;
+use ml_kem::Ciphertext;
+use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
+use sha2::{Digest, Sha256};
+use std::thread;
 mod crypto;
 
 fn main() {
@@ -140,14 +141,14 @@ fn run() {
 // Google ---------------------------------------------------------------------------------------------------
 
     // Decrypt the received AEAD messages
-    let _: Vec<u8> = match crypto::aead::decrypt(&google_k1_c, &nonce, &cypher_text_2, &google_ad) {
+    let decrypted_ciphertext_bytes: Vec<u8> = match crypto::aead::decrypt(&google_k1_c, &nonce, &cypher_text_2, &google_ad) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
             return;
         }
     };
-    let google_ct_from_alice = alice_ct; // TODO: decrypted Ver<u8> has to be converted to EncodedCiphertext<MlKem768Params>
+    let google_ct_from_alice = Ciphertext::<MlKem768>::try_from(decrypted_ciphertext_bytes.as_slice()).unwrap();
     let google_second_k = google_dk.decapsulate(&google_ct_from_alice).unwrap();
     let (google_shared_key_prk, _) = extract(Some(google_first_k.as_bytes()), google_second_k.as_bytes());
     let (google_k2_c, google_k2_s) = key_schedule_2(

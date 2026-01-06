@@ -4,7 +4,7 @@ use ml_dsa::signature::{Signer, Verifier};
 use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
 use sha2::{Digest, Sha256};
 use std::thread;
-use ml_dsa::{KeyGen, MlDsa65, Seed};
+use ml_dsa::{KeyGen, MlDsa65, Seed, Signature};
 use crypto_bigint::rand_core::RngCore;
 use crate::crypto::{graph, participant};
 use crate::crypto::graph::render_graph;
@@ -154,8 +154,10 @@ fn run() {
 
     let rest = &decrypted_msg_1[..mac_start];
     let half = rest.len() / 2;
-    let alice_cert_from_google: Vec<u8> = rest[..half].to_vec();
-    let alice_sign_from_google: Vec<u8> = rest[half..].to_vec();
+    let alice_cert_from_google_bytes: Vec<u8> = rest[..half].to_vec();
+    let alice_sign_from_google_bytes: Vec<u8> = rest[half..].to_vec();
+    let alice_cert_from_google: Signature<MlDsa65> = Signature::try_from(alice_cert_from_google_bytes.as_slice()).unwrap();
+    let alice_sign_from_google: Signature<MlDsa65> = Signature::try_from(alice_sign_from_google_bytes.as_slice()).unwrap();
 
     // Calculate K3_c, K3_s
     let (alice_k3_c, alice_k3_s) = key_schedule_3(
@@ -164,8 +166,8 @@ fn run() {
         alice_nonce_from_google.as_bytes(),
         alice_verifying_key_from_google.encode().as_bytes(),
         alice_shared_key.as_bytes(),
-        alice_sign_from_google.as_bytes(),
-        alice_cert_from_google.as_bytes(),
+        alice_sign_from_google.encode().as_bytes(),
+        alice_cert_from_google.encode().as_bytes(),
         alice_mac_from_google.as_bytes(),
     );
 
@@ -175,18 +177,18 @@ fn run() {
     expected_sign_msg.extend_from_slice(alice_ek.as_bytes().as_bytes());
     expected_sign_msg.extend_from_slice(alice_nonce_from_google.as_bytes());
     expected_sign_msg.extend_from_slice(alice_verifying_key_from_google.encode().as_bytes());
-    expected_sign_msg.extend_from_slice(alice_cert_from_google.as_bytes());
+    expected_sign_msg.extend_from_slice(alice_cert_from_google.encode().as_bytes());
     let mut expected_mac_s_input = Vec::new();
     expected_mac_s_input.extend_from_slice(alice.nonce().clone().as_bytes());
     expected_mac_s_input.extend_from_slice(alice_ek.as_bytes().as_bytes());
     expected_mac_s_input.extend_from_slice(alice_nonce_from_google.as_bytes());
     expected_mac_s_input.extend_from_slice(alice_verifying_key_from_google.encode().as_bytes());
-    expected_mac_s_input.extend_from_slice(alice_sign_from_google.as_bytes());
-    expected_mac_s_input.extend_from_slice(alice_cert_from_google.as_bytes());
+    expected_mac_s_input.extend_from_slice(alice_sign_from_google.encode().as_bytes());
+    expected_mac_s_input.extend_from_slice(alice_cert_from_google.encode().as_bytes());
     expected_mac_s_input.extend_from_slice(b"ServerMAC");
 
-    assert!(alice_verifying_key_from_google.verify(&Sha256::digest(&expected_sign_msg), &google_sign).is_ok());     // google_sign should be alice_sign_from_google, but because of type mismatch google_sign was used (They should be equivalent)
-    assert!(ca.verifying_key().verify(alice_verifying_key_from_google.encode().as_bytes(), &google_cert).is_ok());  // google_cert should be alice_cert_from_google, but because of type mismatch google_cert was used (They should be equivalent)
+    assert!(alice_verifying_key_from_google.verify(&Sha256::digest(&expected_sign_msg), &alice_sign_from_google).is_ok());
+    assert!(ca.verifying_key().verify(alice_verifying_key_from_google.encode().as_bytes(), &alice_cert_from_google).is_ok());
     assert!(verify_hmac(&alice_k2_s, &Sha256::digest(&expected_mac_s_input), alice_mac_from_google.as_bytes()));
 
     // Calculate alice's MAC tag
@@ -195,8 +197,8 @@ fn run() {
     mac_c_input.extend_from_slice(alice_ek.as_bytes().as_bytes());
     mac_c_input.extend_from_slice(alice_nonce_from_google.as_bytes());
     mac_c_input.extend_from_slice(alice_verifying_key_from_google.encode().as_bytes());
-    mac_c_input.extend_from_slice(alice_sign_from_google.as_bytes());
-    mac_c_input.extend_from_slice(alice_cert_from_google.as_bytes());
+    mac_c_input.extend_from_slice(alice_sign_from_google.encode().as_bytes());
+    mac_c_input.extend_from_slice(alice_cert_from_google.encode().as_bytes());
     mac_c_input.extend_from_slice(b"ClientMAC");
 
     let alice_mac_c = compute_hmac(&alice_k2_c, &Sha256::digest(&mac_c_input));
