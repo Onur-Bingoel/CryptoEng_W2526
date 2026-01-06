@@ -1,38 +1,28 @@
-use crate::crypto::graph::{Graph, Point};
 use crypto_bigint::rand_core::RngCore;
 use ml_dsa::{signature::Signer, KeyGen, KeyPair, MlDsa65, Seed, Signature, VerifyingKey};
 use rand::rngs::ThreadRng;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static USER_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub struct User {
-    id: u64,
+    pub(crate) name: String,
     nonce: [u8; 8],
 }
 
 impl User {
-    pub fn new(name: String, mut rng: ThreadRng, graph: &mut Graph) -> Self {
-        let id = USER_COUNTER.fetch_add(1, Ordering::SeqCst);
-        graph.positions.insert(id, Point { x: (id as i32) * 100 + 300, y: 300 });
-        graph.names.insert(id, name.clone());
+    pub fn new(name: String, mut rng: ThreadRng) -> Self {
         let val: [u8; 8] = rng.next_u64().to_le_bytes();
         User {
-            id,
+            name,
             nonce: val,
         }
-    }
-
-    pub fn id(&self) -> u64 {
-        self.id.clone()
     }
 
     pub fn nonce(&self) -> [u8; 8] {
         self.nonce.clone()
     }
 
-    pub fn send_message(&self, title: String, target_id: u64, graph: &mut Graph) {
-        graph.add_arrow(self.id, target_id, title);
+    pub fn send_message(&self, title: String, target_name: String) {
+        let self_name = self.name.clone();
+        println!("--- Sending {title} from {self_name} to {target_name} ---");
     }
 
 }

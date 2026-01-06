@@ -1,8 +1,7 @@
-use crate::crypto::graph::render_graph;
 use crate::crypto::hmac::{compute_hmac, verify_hmac};
 use crate::crypto::key_schedule::{extract, key_schedule_1, key_schedule_2, key_schedule_3};
 use crate::crypto::participant::User;
-use crate::crypto::{graph, participant};
+use crate::crypto::participant;
 use aead::rand_core::RngCore;
 use image::EncodableLayout;
 use kem::{Decapsulate, Encapsulate};
@@ -23,21 +22,19 @@ fn main() {
 }
 
 fn run() {
-    let mut graph = graph::Graph::new();
     let mut rng = rand::thread_rng();
     let nonce = [0u8; 12];
     let random_sign_value: [u8; 8] = rng.next_u64().to_le_bytes(); // There is no sign in the slides
 
     println!("--- Initializing ---");
     let ca = participant::CA::new(rng.clone());
-    let alice = User::new("Alice".into(), rng.clone(), &mut graph);
-    let google = User::new("Google".into(), rng.clone(), &mut graph);
+    let alice = User::new("Alice".into(), rng.clone());
+    let google = User::new("Google".into(), rng.clone());
 
 // Alice ---------------------------------------------------------------------------------------------------
     let (alice_dk, alice_ek) = MlKem768::generate(&mut rng);
 
-    alice.send_message("nonce_c, ek".to_string(), google.id(), &mut graph);
-    println!("--- Sending nonce_c, ek from Alice to Google ---");
+    alice.send_message("nonce_c, ek".to_string(), google.name.clone());
     let google_nonce_from_alice = alice.nonce();
     let google_ek_from_alice = alice_ek.clone();
 
@@ -57,17 +54,14 @@ fn run() {
     google_ad.extend_from_slice(b",");
     google_ad.extend_from_slice(google_ek.as_bytes().as_bytes());
 
-    google.send_message("nonce_s, ct".to_string(), alice.id(), &mut graph);
-    println!("--- Sending nonce_s, ct from Google to Alice ---");
+    google.send_message("nonce_s, ct".to_string(), alice.name.clone());
     let alice_nonce_from_google = google.nonce();
     let alice_ct_from_google = google_ct;
 
-    google.send_message("ek".to_string(), alice.id(), &mut graph);
-    println!("--- Sending ct from Google to Alice ---");
+    google.send_message("ek".to_string(), alice.name.clone());
     let alice_ek_from_google = google_ek.clone();
 
-    google.send_message("AEAD(k1_s, {{cert_pk_s}})".to_string(), alice.id(), &mut graph);
-    println!("--- Sending AEAD(k1_s, {{cert_pk_s}}) from Google to Alice ---");
+    google.send_message("AEAD(k1_s, {{cert_pk_s}})".to_string(), alice.name.clone());
     let cypher_text_1: Vec<u8> = match crypto::aead::encrypt(&google_k1_s, &nonce, google_cert.encode().as_bytes(), &google_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -118,8 +112,7 @@ fn run() {
 
     let alice_mac_c = compute_hmac(&alice_k2_c, &Sha256::digest(&mac_c_input));
 
-    alice.send_message("AEAD(k1_c, {{alice_ct}})".to_string(), google.id(), &mut graph);
-    println!("--- Sending AEAD(k1_c, {{alice_ct}}) from Alice to Google ---");
+    alice.send_message("AEAD(k1_c, {{alice_ct}})".to_string(), google.name.clone());
     let cypher_text_2: Vec<u8> = match crypto::aead::encrypt(&alice_k1_c, &nonce, alice_ct.as_bytes(), &alice_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -128,8 +121,7 @@ fn run() {
         }
     };
 
-    alice.send_message("AEAD(k2_c, {{alice_mac_c}})".to_string(), google.id(), &mut graph);
-    println!("--- Sending AEAD(k2_c, {{alice_mac_c}}) from Alice to Google ---");
+    alice.send_message("AEAD(k2_c, {{alice_mac_c}})".to_string(), google.name.clone());
     let cypher_text_3: Vec<u8> = match crypto::aead::encrypt(&alice_k2_c, &nonce, alice_mac_c.as_bytes(), &alice_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -191,8 +183,7 @@ fn run() {
 
     let google_mac_s = compute_hmac(&google_k2_s, &Sha256::digest(&mac_s_input));
 
-    google.send_message("AEAD(k2_s, {{mac_s}})".to_string(), alice.id(), &mut graph);
-    println!("--- Sending AEAD(k2_s, {{mac_s}}) from Google to Alice ---");
+    google.send_message("AEAD(k2_s, {{mac_s}})".to_string(), alice.name.clone());
     let cypher_text_4: Vec<u8> = match crypto::aead::encrypt(&google_k2_s, &nonce, google_mac_s.as_bytes(), &google_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -257,6 +248,4 @@ fn run() {
     assert_eq!(alice_k2_s, google_k2_s);
     assert_eq!(alice_k3_c, google_k3_c);
     assert_eq!(alice_k3_s, google_k3_s);
-
-    render_graph(&graph, "messages.png");
 }

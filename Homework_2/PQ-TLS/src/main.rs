@@ -1,16 +1,15 @@
+use crate::crypto::hmac::{compute_hmac, verify_hmac};
+use crate::crypto::key_schedule::{key_schedule_1, key_schedule_2, key_schedule_3};
+use crate::crypto::participant::User;
+use crate::crypto::participant;
+use crypto_bigint::rand_core::RngCore;
 use image::EncodableLayout;
 use kem::{Decapsulate, Encapsulate};
 use ml_dsa::signature::{Signer, Verifier};
+use ml_dsa::{KeyGen, MlDsa65, Seed, Signature};
 use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
 use sha2::{Digest, Sha256};
 use std::thread;
-use ml_dsa::{KeyGen, MlDsa65, Seed, Signature};
-use crypto_bigint::rand_core::RngCore;
-use crate::crypto::{graph, participant};
-use crate::crypto::graph::render_graph;
-use crate::crypto::hmac::{compute_hmac, verify_hmac};
-use crate::crypto::key_schedule::{key_schedule_1, key_schedule_2, key_schedule_3};
-use crate::crypto::participant::{User};
 mod crypto;
 
 fn main() {
@@ -23,7 +22,6 @@ fn main() {
 }
 
 fn run() {
-    let mut graph = graph::Graph::new();
     let mut rng = rand::thread_rng();
     let nonce = [0u8; 12];
     let mut seed = Seed::default();
@@ -31,14 +29,13 @@ fn run() {
 
     println!("--- Initializing ---");
     let ca = participant::CA::new(rng.clone());
-    let alice = User::new("Alice".into(), rng.clone(), &mut graph);
-    let google = User::new("Google".into(), rng.clone(), &mut graph);
+    let alice = User::new("Alice".into(), rng.clone());
+    let google = User::new("Google".into(), rng.clone());
 
 // Alice ---------------------------------------------------------------------------------------------------
     let (alice_dk, alice_ek) = MlKem768::generate(&mut rng);
 
-    alice.send_message("nonce_c, ek".to_string(), google.id(), &mut graph);
-    println!("--- Sending nonce_c, ek from Alice to Google ---");
+    alice.send_message("nonce_c, ek".to_string(), google.name.clone());
     let google_nonce_from_alice = alice.nonce();
     let google_ek_from_alice = alice_ek.clone();
 
@@ -93,17 +90,14 @@ fn run() {
         google_mac_s.as_bytes(),
     );
 
-    google.send_message("nonce_s, ct".to_string(), alice.id(), &mut graph);
-    println!("--- Sending nonce_s, ct from Google to Alice ---");
+    google.send_message("nonce_s, ct".to_string(), alice.name.clone());
     let alice_nonce_from_google = google.nonce();
     let alice_ct_from_google = google_ct;
 
-    google.send_message("verifying_key_s".to_string(), alice.id(), &mut graph);
-    println!("--- Sending verifying_key_s from Google to Alice ---");
+    google.send_message("verifying_key_s".to_string(), alice.name.clone());
     let alice_verifying_key_from_google = google_key_pair.verifying_key();
 
-    google.send_message("AEAD(k1_s, {{cert_pk_s , sign_s, mac_s}})".to_string(), alice.id(), &mut graph);
-    println!("--- Sending AEAD(k1_s, {{cert_pk_s , sign_s, mac_s}}) from Google to Alice ---");
+    google.send_message("AEAD(k1_s, {{cert_pk_s , sign_s, mac_s}})".to_string(), alice.name.clone());
     let mut msg = Vec::new();
     msg.extend_from_slice(google_cert.encode().as_bytes());
     msg.extend_from_slice(google_sign.encode().as_bytes());
@@ -203,8 +197,7 @@ fn run() {
 
     let alice_mac_c = compute_hmac(&alice_k2_c, &Sha256::digest(&mac_c_input));
 
-    alice.send_message("AEAD(k1_c, {{alice_mac_c}})".to_string(), google.id(), &mut graph);
-    println!("--- Sending AEAD(k1_c, {{alice_mac_c}}) from Alice to Google ---");
+    alice.send_message("AEAD(k1_c, {{alice_mac_c}})".to_string(), google.name.clone());
     let cypher_text_2: Vec<u8> = match crypto::aead::encrypt(&alice_k1_c, &nonce, alice_mac_c.as_bytes(), &alice_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -244,6 +237,4 @@ fn run() {
     assert_eq!(alice_k2_s, google_k2_s);
     assert_eq!(alice_k3_c, google_k3_c);
     assert_eq!(alice_k3_s, google_k3_s);
-
-    render_graph(&graph, "messages.png");
 }
