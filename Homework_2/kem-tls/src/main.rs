@@ -1,0 +1,11 @@
+use std::thread;
+use kem_tls::run;
+
+fn main() {
+    thread::Builder::new()
+        .stack_size(8 * 1024 * 1024) // z.B. 8 MB
+        .spawn(run)
+        .expect("Thread-Start fehlgeschlagen")
+        .join()
+        .expect("Thread-Abbruch");
+}

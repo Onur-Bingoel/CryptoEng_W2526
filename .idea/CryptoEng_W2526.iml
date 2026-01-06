@@ -2,8 +2,6 @@
 <module type="EMPTY_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
-      <sourceFolder url="file://$MODULE_DIR$/Homework_2/KEM-TLS/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/Homework_2/PQ-TLS/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/old_Files/L1/AEAD_example_code/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/old_Files/L1/CompareHash/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/old_Files/L1/HKDF_demo/src" isTestSource="false" />
@@ -16,8 +14,9 @@
       <sourceFolder url="file://$MODULE_DIR$/old_Files/L3/signdemo/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/old_Files/L4/DHIESdemo/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src" isTestSource="false" />
-      <excludeFolder url="file://$MODULE_DIR$/Homework_2/KEM-TLS/target" />
-      <excludeFolder url="file://$MODULE_DIR$/Homework_2/PQ-TLS/target" />
+      <sourceFolder url="file://$MODULE_DIR$/Homework_2/Comparison/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/Homework_2/kem-tls/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/Homework_2/pq-tls/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/old_Files/L1/AEAD_example_code/target" />
       <excludeFolder url="file://$MODULE_DIR$/old_Files/L1/CompareHash/target" />
       <excludeFolder url="file://$MODULE_DIR$/old_Files/L1/HKDF_demo/target" />
@@ -30,6 +29,9 @@
       <excludeFolder url="file://$MODULE_DIR$/old_Files/L3/signdemo/target" />
       <excludeFolder url="file://$MODULE_DIR$/old_Files/L4/DHIESdemo/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
+      <excludeFolder url="file://$MODULE_DIR$/Homework_2/Comparison/target" />
+      <excludeFolder url="file://$MODULE_DIR$/Homework_2/kem-tls/target" />
+      <excludeFolder url="file://$MODULE_DIR$/Homework_2/pq-tls/target" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
