@@ -11,31 +11,9 @@ use ml_kem::Ciphertext;
 use ml_kem::{EncodedSizeUser, KemCore, MlKem768};
 use sha2::{Digest, Sha256};
 
-
-/*
-
-=== pq-tls Handshake ===
-Runs: 50
-Mean time:   79.585586 ms
-Median time: 69.850300 ms
-Std dev:     27.451434 ms
-Min time:    48.113800 ms
-Max time:    189.102600 ms
-
-=== kem-tls Handshake ===
-Runs: 50
-Mean time:   50.353644 ms
-Median time: 41.174400 ms
-Std dev:     24.739401 ms
-Min time:    32.961600 ms
-Max time:    144.388300 ms
-
-=== Relative Comparison ===
-pq-tls / kem-tls mean time ratio: 1.58x
-kem-tls is faster on average.
-
- */
 pub fn run(silent: bool) {
+    
+// Initialization -------------------------------------------------------------------------------------------
     let mut rng = rand::thread_rng();
     let nonce = [0u8; 12];
     let random_sign_value: [u8; 8] = rng.next_u64().to_le_bytes(); // There is no sign in the slides
@@ -44,14 +22,19 @@ pub fn run(silent: bool) {
     let alice = User::new("Alice".into(), rng.clone());
     let google = User::new("Google".into(), rng.clone());
 
-    // Alice ---------------------------------------------------------------------------------------------------
+// Alice ---------------------------------------------------------------------------------------------------
+    
+    // Generate key pair 
     let (alice_dk, alice_ek) = MlKem768::generate(&mut rng);
 
+    // Send nonce_c and ek from Alice to Google
     alice.send_message("nonce_c, ek".to_string(), google.name.clone(), silent);
     let google_nonce_from_alice = alice.nonce();
     let google_ek_from_alice = alice_ek.clone();
 
-    // Google ---------------------------------------------------------------------------------------------------
+// Google ---------------------------------------------------------------------------------------------------
+    
+    // Generate key pair and calculate first shared key
     let (google_dk, google_ek) = MlKem768::generate(&mut rng);
     let (google_ct, google_first_k) = google_ek_from_alice.encapsulate(&mut rng).unwrap();
 
@@ -61,20 +44,22 @@ pub fn run(silent: bool) {
     // Get certificate for google's public key
     let google_cert = ca.generate_certificate(google_ek.as_bytes().as_bytes());
 
+    // Send nonce_s, ct, ek from Google to Alice
+    google.send_message("nonce_s, ct".to_string(), alice.name.clone(), silent);
+    let alice_nonce_from_google = google.nonce();
+    let alice_ct_from_google = google_ct;
+
+    // Send ek from Google to Alice
+    google.send_message("ek".to_string(), alice.name.clone(), silent);
+    let alice_ek_from_google = google_ek.clone();
+
+    // Send AEAD(k1_s, {{cert_pk_s}}) from Google to Alice
+    google.send_message("AEAD(k1_s, {{cert_pk_s}})".to_string(), alice.name.clone(), silent);
     let mut google_ad = Vec::new();  // ("Alice", "Google", A, G) Set the associate data as "('Alice', 'Google', A, G)", where A and G are the pk's of ALice and Google, respectively
     google_ad.extend_from_slice(b"Alice,Google,");
     google_ad.extend_from_slice(google_ek_from_alice.as_bytes().as_bytes());
     google_ad.extend_from_slice(b",");
     google_ad.extend_from_slice(google_ek.as_bytes().as_bytes());
-
-    google.send_message("nonce_s, ct".to_string(), alice.name.clone(), silent);
-    let alice_nonce_from_google = google.nonce();
-    let alice_ct_from_google = google_ct;
-
-    google.send_message("ek".to_string(), alice.name.clone(), silent);
-    let alice_ek_from_google = google_ek.clone();
-
-    google.send_message("AEAD(k1_s, {{cert_pk_s}})".to_string(), alice.name.clone(), silent);
     let cypher_text_1: Vec<u8> = match crypto::aead::encrypt(&google_k1_s, &nonce, google_cert.encode().as_bytes(), &google_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -83,7 +68,9 @@ pub fn run(silent: bool) {
         }
     };
 
-    // Alice ---------------------------------------------------------------------------------------------------
+// Alice ---------------------------------------------------------------------------------------------------
+    
+    // Calculate first shared key, K1_c, K1_s and second shared key
     let alice_first_k = alice_dk.decapsulate(&alice_ct_from_google).unwrap();
     let (alice_k1_c, alice_k1_s) = key_schedule_1(alice_first_k.as_bytes());
     let (alice_ct, alice_second_k) = alice_ek_from_google.encapsulate(&mut rng).unwrap();
@@ -101,10 +88,14 @@ pub fn run(silent: bool) {
             return;
         }
     };
+    
+    // Verify that the certificate is valid
     assert!(ca.verifying_key().verify(alice_ek_from_google.as_bytes().as_bytes(), &google_cert).is_ok());  // google_cert should be alice_cert_from_google, but because of type mismatch google_cert was used (They should be equivalent)
 
+    // Calculate final shared key
     let (alice_shared_key_prk, _) = extract(Some(alice_first_k.as_bytes()), alice_second_k.as_bytes());
 
+    // Calculate K2_c, K2_s
     let (alice_k2_c, alice_k2_s) = key_schedule_2(
         alice.nonce().clone().as_bytes(),
         alice_ek.as_bytes().as_bytes(),
@@ -125,6 +116,7 @@ pub fn run(silent: bool) {
 
     let alice_mac_c = compute_hmac(&alice_k2_c, &Sha256::digest(&mac_c_input));
 
+    // Send AEAD(k2_c, {{alice_ct}}) from Alice to Google
     alice.send_message("AEAD(k1_c, {{alice_ct}})".to_string(), google.name.clone(), silent);
     let cypher_text_2: Vec<u8> = match crypto::aead::encrypt(&alice_k1_c, &nonce, alice_ct.as_bytes(), &alice_ad) {
         Ok(c) => c,
@@ -134,6 +126,7 @@ pub fn run(silent: bool) {
         }
     };
 
+    // Send AEAD(k2_c, {{alice_mac_c}}) from Alice to Google
     alice.send_message("AEAD(k2_c, {{alice_mac_c}})".to_string(), google.name.clone(), silent);
     let cypher_text_3: Vec<u8> = match crypto::aead::encrypt(&alice_k2_c, &nonce, alice_mac_c.as_bytes(), &alice_ad) {
         Ok(c) => c,
@@ -143,7 +136,7 @@ pub fn run(silent: bool) {
         }
     };
 
-    // Google ---------------------------------------------------------------------------------------------------
+// Google ---------------------------------------------------------------------------------------------------
 
     // Decrypt the received AEAD messages
     let decrypted_ciphertext_bytes: Vec<u8> = match crypto::aead::decrypt(&google_k1_c, &nonce, &cypher_text_2, &google_ad) {
@@ -154,6 +147,8 @@ pub fn run(silent: bool) {
         }
     };
     let google_ct_from_alice = Ciphertext::<MlKem768>::try_from(decrypted_ciphertext_bytes.as_slice()).unwrap();
+    
+    // Calculate second shared, final shared key and K2_c, K2_s
     let google_second_k = google_dk.decapsulate(&google_ct_from_alice).unwrap();
     let (google_shared_key_prk, _) = extract(Some(google_first_k.as_bytes()), google_second_k.as_bytes());
     let (google_k2_c, google_k2_s) = key_schedule_2(
@@ -164,6 +159,7 @@ pub fn run(silent: bool) {
         google_shared_key_prk.as_bytes(),
     );
 
+    // Decrypt the MAC tag from Alice
     let google_mac_c_from_alice: Vec<u8> = match crypto::aead::decrypt(&google_k2_c, &nonce, &cypher_text_3, &google_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -196,6 +192,7 @@ pub fn run(silent: bool) {
 
     let google_mac_s = compute_hmac(&google_k2_s, &Sha256::digest(&mac_s_input));
 
+    // Send AEAD(k2_s, {{mac_s}}) from Google to Alice
     google.send_message("AEAD(k2_s, {{mac_s}})".to_string(), alice.name.clone(), silent);
     let cypher_text_4: Vec<u8> = match crypto::aead::encrypt(&google_k2_s, &nonce, google_mac_s.as_bytes(), &google_ad) {
         Ok(c) => c,
@@ -205,8 +202,9 @@ pub fn run(silent: bool) {
         }
     };
 
-    // Alice ---------------------------------------------------------------------------------------------------
+// Alice ---------------------------------------------------------------------------------------------------
 
+    // Decrypt the MAC tag from Google
     let alice_mac_s_from_google: Vec<u8> = match crypto::aead::decrypt(&alice_k2_s, &nonce, &cypher_text_4, &alice_ad) {
         Ok(c) => c,
         Err(e) => {
@@ -215,6 +213,7 @@ pub fn run(silent: bool) {
         }
     };
 
+    // Verify the MAC tag from Google
     let mut expected_mac_s_input = Vec::new();
     expected_mac_s_input.extend_from_slice(alice.nonce().clone().as_bytes());
     expected_mac_s_input.extend_from_slice(alice_ek.as_bytes().as_bytes());
@@ -239,7 +238,7 @@ pub fn run(silent: bool) {
     );
 
 
-    // Google ---------------------------------------------------------------------------------------------------
+// Google ---------------------------------------------------------------------------------------------------
 
     // Calculate K3_c, K3_s
     let (google_k3_c, google_k3_s) = key_schedule_3(
@@ -253,7 +252,7 @@ pub fn run(silent: bool) {
         google_mac_s.as_bytes(),
     );
 
-    // END ---------------------------------------------------------------------------------------------------
+// END ---------------------------------------------------------------------------------------------------
     // Verify that both sides derived the same keys
     assert_eq!(alice_k1_c, google_k1_c);
     assert_eq!(alice_k1_s, google_k1_s);

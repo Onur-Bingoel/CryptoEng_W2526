@@ -12,6 +12,8 @@ use sha2::{Digest, Sha256};
 mod crypto;
 
 pub fn run(silent: bool) {
+
+// Initialization -------------------------------------------------------------------------------------------
     let mut rng = rand::thread_rng();
     let nonce = [0u8; 12];
     let mut seed = Seed::default();
@@ -21,14 +23,19 @@ pub fn run(silent: bool) {
     let alice = User::new("Alice".into(), rng.clone());
     let google = User::new("Google".into(), rng.clone());
 
-    // Alice ---------------------------------------------------------------------------------------------------
+// Alice ---------------------------------------------------------------------------------------------------
+
+    // Generate key pair
     let (alice_dk, alice_ek) = MlKem768::generate(&mut rng);
 
+    // Send nonce_c and ek from Alice to Google
     alice.send_message("nonce_c, ek".to_string(), google.name.clone(), silent);
     let google_nonce_from_alice = alice.nonce();
     let google_ek_from_alice = alice_ek.clone();
 
-    // Google ---------------------------------------------------------------------------------------------------
+// Google ---------------------------------------------------------------------------------------------------
+
+    // Generate key pair and calculate shared key and ciphertext
     let google_key_pair = MlDsa65::from_seed(&seed);
     let (google_ct, google_shared_key) = google_ek_from_alice.encapsulate(&mut rng).unwrap();
 
@@ -79,13 +86,16 @@ pub fn run(silent: bool) {
         google_mac_s.as_bytes(),
     );
 
+    // Send nonce_s, ct from Google to Alice
     google.send_message("nonce_s, ct".to_string(), alice.name.clone(), silent);
     let alice_nonce_from_google = google.nonce();
     let alice_ct_from_google = google_ct;
 
+    // Send verifying_key_s from Google to Alice
     google.send_message("verifying_key_s".to_string(), alice.name.clone(), silent);
     let alice_verifying_key_from_google = google_key_pair.verifying_key();
 
+    // Send AEAD(k1_s, {{cert_pk_s , sign_s, mac_s}}) message from Google to Alice
     google.send_message("AEAD(k1_s, {{cert_pk_s , sign_s, mac_s}})".to_string(), alice.name.clone(), silent);
     let mut msg = Vec::new();
     msg.extend_from_slice(google_cert.encode().as_bytes());
@@ -105,8 +115,9 @@ pub fn run(silent: bool) {
         }
     };
 
-    // Alice ---------------------------------------------------------------------------------------------------
+// Alice ---------------------------------------------------------------------------------------------------
 
+    // Calculate shared key and K1_c, K1_s, K2_c, K2_s
     let alice_shared_key = alice_dk.decapsulate(&alice_ct_from_google).unwrap();
     let (alice_k1_c, alice_k1_s) = key_schedule_1(alice_shared_key.as_bytes());
     let (alice_k2_c, alice_k2_s) = key_schedule_2(
@@ -186,6 +197,7 @@ pub fn run(silent: bool) {
 
     let alice_mac_c = compute_hmac(&alice_k2_c, &Sha256::digest(&mac_c_input));
 
+    // Send AEAD(k1_c, {{alice_mac_c}}) message from Alice to Google
     alice.send_message("AEAD(k1_c, {{alice_mac_c}})".to_string(), google.name.clone(), silent);
     let cypher_text_2: Vec<u8> = match crypto::aead::encrypt(&alice_k1_c, &nonce, alice_mac_c.as_bytes(), &alice_ad) {
         Ok(c) => c,
@@ -195,7 +207,7 @@ pub fn run(silent: bool) {
         }
     };
 
-    // Google ---------------------------------------------------------------------------------------------------
+// Google ---------------------------------------------------------------------------------------------------
 
     // Decrypt the received AEAD message
     let decrypted_msg_2: Vec<u8> = match crypto::aead::decrypt(&google_k1_c, &nonce, &cypher_text_2, &google_ad) {
@@ -218,7 +230,7 @@ pub fn run(silent: bool) {
 
     assert!(verify_hmac(&google_k2_c, &Sha256::digest(&expected_mac_c_input), decrypted_msg_2.as_bytes()));
 
-    // END ---------------------------------------------------------------------------------------------------
+// END ---------------------------------------------------------------------------------------------------
     // Verify that both sides derived the same keys
     assert_eq!(alice_k1_c, google_k1_c);
     assert_eq!(alice_k1_s, google_k1_s);

@@ -9,8 +9,8 @@ fn benchmark<F>(name: &str, func: F) -> Vec<Duration>
 where
     F: Fn(),
 {
+    // Iteratively run the function and record timings
     let mut timings = Vec::with_capacity(ITERATIONS);
-    func(); // Warm-up
     for _ in 0..ITERATIONS {
         let start = Instant::now();
         func();
@@ -21,17 +21,20 @@ where
 }
 
 fn mean(data: &[Duration]) -> Duration {
+    // Calculate mean by summing all durations and dividing by the number of runs
     let total_ns: u128 = data.iter().map(|d| d.as_nanos()).sum();
     Duration::from_nanos((total_ns / data.len() as u128) as u64)
 }
 
 fn median(data: &[Duration]) -> Duration {
+    // Calculate median by sorting the data and taking the middle element
     let mut sorted = data.to_vec();
     sorted.sort();
     sorted[sorted.len() / 2]
 }
 
 fn std_dev(data: &[Duration], mean: Duration) -> Duration {
+    // Calculate standard deviation by calculating the mean squared deviation
     let mean_ns = mean.as_nanos() as f64;
     let variance = data
         .iter()
@@ -63,12 +66,14 @@ fn print_results(name: &str, data: &[Duration]) {
 fn run() {
     println!("Starting pq-tls vs kem-tls efficiency comparison...\n");
 
+    // Start benchmarking both implementations and collect timings
     let pq_timings = benchmark("pq-tls Handshake", || pq_run(true));
     let kem_timings = benchmark("kem-tls Handshake", || kem_run(true));
 
     print_results("pq-tls Handshake", &pq_timings);
     print_results("kem-tls Handshake", &kem_timings);
 
+    // Calculate average timings and print relative comparison
     let pq_mean = mean(&pq_timings).as_secs_f64();
     let kem_mean = mean(&kem_timings).as_secs_f64();
 
