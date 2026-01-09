@@ -110,7 +110,7 @@ pub fn run(silent: bool) {
     mac_c_input.extend_from_slice(alice_ek.as_bytes().as_bytes());
     mac_c_input.extend_from_slice(alice_nonce_from_google.as_bytes());
     mac_c_input.extend_from_slice(alice_ek_from_google.as_bytes().as_bytes());
-    mac_c_input.extend_from_slice(random_sign_value.as_bytes()); // TODO: random_sign_value because there is no server signature in this scheme
+    mac_c_input.extend_from_slice(random_sign_value.as_bytes()); // random_sign_value used because there is no server signature in this scheme
     mac_c_input.extend_from_slice(alice_cert_from_google.as_bytes());
     mac_c_input.extend_from_slice(b"ClientMAC");
 
@@ -174,7 +174,7 @@ pub fn run(silent: bool) {
     expected_mac_c_input.extend_from_slice(google_ek_from_alice.as_bytes().as_bytes());
     expected_mac_c_input.extend_from_slice(google.nonce().as_bytes());
     expected_mac_c_input.extend_from_slice(google_ek.as_bytes().as_bytes());
-    expected_mac_c_input.extend_from_slice(random_sign_value.as_bytes()); // TODO: random_sign_value because there is no server signature in this scheme
+    expected_mac_c_input.extend_from_slice(random_sign_value.as_bytes()); // random_sign_value used because there is no server signature in this scheme
     expected_mac_c_input.extend_from_slice(google_cert.encode().as_bytes());
     expected_mac_c_input.extend_from_slice(b"ClientMAC");
 
@@ -186,7 +186,7 @@ pub fn run(silent: bool) {
     mac_s_input.extend_from_slice(google_ek_from_alice.as_bytes().as_bytes());
     mac_s_input.extend_from_slice(google.nonce().as_bytes());
     mac_s_input.extend_from_slice(google_ek.as_bytes().as_bytes());
-    mac_s_input.extend_from_slice(random_sign_value.as_bytes()); // TODO: random_sign_value because there is no server signature in this scheme
+    mac_s_input.extend_from_slice(random_sign_value.as_bytes()); // random_sign_value used because there is no server signature in this scheme
     mac_s_input.extend_from_slice(google_cert.encode().as_bytes());
     mac_s_input.extend_from_slice(b"ServerMAC");
 
@@ -219,7 +219,7 @@ pub fn run(silent: bool) {
     expected_mac_s_input.extend_from_slice(alice_ek.as_bytes().as_bytes());
     expected_mac_s_input.extend_from_slice(alice_nonce_from_google.as_bytes());
     expected_mac_s_input.extend_from_slice(alice_ek_from_google.as_bytes().as_bytes());
-    expected_mac_s_input.extend_from_slice(random_sign_value.as_bytes()); // TODO: random_sign_value because there is no server signature in this scheme
+    expected_mac_s_input.extend_from_slice(random_sign_value.as_bytes()); // random_sign_value used because there is no server signature in this scheme
     expected_mac_s_input.extend_from_slice(alice_cert_from_google.as_bytes());
     expected_mac_s_input.extend_from_slice(b"ServerMAC");
 
@@ -232,7 +232,7 @@ pub fn run(silent: bool) {
         alice_nonce_from_google.as_bytes(),
         alice_ek_from_google.as_bytes().as_bytes(),
         alice_shared_key_prk.as_bytes(),
-        random_sign_value.as_bytes(),  // TODO: There is no alice_sign_from_google
+        random_sign_value.as_bytes(),  // random_sign_value used because there is no server signature in this scheme
         alice_cert_from_google.as_bytes(),
         alice_mac_s_from_google.as_bytes(),
     );
@@ -247,7 +247,7 @@ pub fn run(silent: bool) {
         google.nonce().as_bytes(),
         google_ek.as_bytes().as_bytes(),
         google_shared_key_prk.as_bytes(),
-        random_sign_value.as_bytes(),  // TODO: There is no google_sign
+        random_sign_value.as_bytes(),  // random_sign_value used because there is no server signature in this scheme
         google_cert.encode().as_bytes(),
         google_mac_s.as_bytes(),
     );
