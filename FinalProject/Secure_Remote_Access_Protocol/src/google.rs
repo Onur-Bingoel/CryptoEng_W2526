@@ -246,6 +246,8 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
     // ----------- Double Ratchet -----------
 
     let mut rk_i = sk;
+    let mut _large_x_i = large_x;
+    let mut y_i = y;
 
     loop {
         // Receive large_x_plus_one and c1 from Alice
@@ -269,10 +271,9 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
         let (nonce, large_x_plus_one_as_bytes) = nonce_and_large_x_plus_one_as_bytes.split_at(12);
         let large_x_plus_one = ProjectivePoint::from_bytes(large_x_plus_one_as_bytes.into()).unwrap();
 
-
         // Recover the chains
-        let (rk_i_plus_1, ck_0) = kdf_rk(rk_i.as_bytes(), (large_x_plus_one * y).to_bytes().as_bytes());
-        let (_ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
+        let (rk_i_plus_1, ck_0) = kdf_rk(rk_i.as_bytes(), (large_x_plus_one * y_i).to_bytes().as_bytes());
+        let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
 
         let message_from_user: Vec<u8> = match crypto::aead::decrypt(&mk_1.try_into().unwrap(), &nonce.try_into().unwrap(), &c1, &ad.as_ref()) {
             Ok(c) => c,
@@ -281,15 +282,20 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
                 return;
             }
         };
-
+        
         // Echo message_from_user
         let message_text = String::from_utf8_lossy(&message_from_user);
         let message_from_server = format!("Echo => {}", message_text);
-
+        
+        // Can be used for multiple messages
+        let (_ck_2, _mk_2) = kdf_ck(ck_1.as_bytes());
+        
+        
+        
         // Encrypt message_from_server with DH Ratchet and Sym Ratchet
         let y_plus_1 = Scalar::random(&mut OsRng);
         let (rk_i_plus_2, ck_0) = kdf_rk(rk_i_plus_1.as_bytes(), (large_x_plus_one * y_plus_1).to_bytes().as_bytes());
-        let (_ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
+        let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
         OsRng.fill_bytes(&mut aead_nonce);
         let c1: Vec<u8> = match crypto::aead::encrypt(&mk_1.try_into().unwrap(), &aead_nonce, message_from_server.as_bytes(), &ad.to_vec()) {
             Ok(c) => c,
@@ -317,8 +323,13 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
             aead_payload: cypher_text
         };
         User::send_bytes(&mut stream, &msg);
+        
+        // Can be used for multiple messages
+        let (_ck_2, _mk_2) = kdf_ck(ck_1.as_bytes());
 
         rk_i = rk_i_plus_2.into();
+        _large_x_i = large_x_plus_one;
+        y_i = y_plus_1;
     }
 }
 

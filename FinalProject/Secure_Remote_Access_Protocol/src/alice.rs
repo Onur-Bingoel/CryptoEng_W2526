@@ -245,6 +245,8 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     // ----------- Double Ratchet -----------
 
     let mut rk_i = sk;
+    let mut large_y_i = large_y;
+    let mut _x_i = x;
 
     loop {
         println!("Enter a message to send to Google: ");
@@ -256,8 +258,8 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
 
 
         let x_plus_1 = Scalar::random(&mut OsRng);
-        let (rk_i_plus_1, ck_0) = kdf_rk(rk_i.as_bytes(), (large_y * x_plus_1).to_bytes().as_bytes());
-        let (_ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
+        let (rk_i_plus_1, ck_0) = kdf_rk(rk_i.as_bytes(), (large_y_i * x_plus_1).to_bytes().as_bytes());
+        let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
         let c1: Vec<u8> = match crypto::aead::encrypt(&mk_1.try_into().unwrap(), &aead_nonce, message_from_user.as_bytes(), &ad.to_vec()) {
             Ok(c) => c,
             Err(e) => {
@@ -285,6 +287,11 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         };
         User::send_bytes(&mut stream, &msg);
 
+        // Can be used for multiple messages
+        let (_ck_2, _mk_2) = kdf_ck(ck_1.as_bytes());
+
+
+
         // Receive large_x_plus_one and c1 from Alice
         let msg = User::recv_bytes(&mut stream);
         let (nonce, aead_payload) = match msg {
@@ -306,10 +313,9 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         let (nonce, large_y_plus_one_as_bytes) = nonce_and_large_y_plus_one_as_bytes.split_at(12);
         let large_y_plus_one = ProjectivePoint::from_bytes(large_y_plus_one_as_bytes.into()).unwrap();
 
-
         // Recover the chains
         let (rk_i_plus_2, ck_0) = kdf_rk(rk_i_plus_1.as_bytes(), (large_y_plus_one * x_plus_1).to_bytes().as_bytes());
-        let (_ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
+        let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
 
         let message_from_server: Vec<u8> = match crypto::aead::decrypt(&mk_1.try_into().unwrap(), &nonce.try_into().unwrap(), &c1, &ad.as_ref()) {
             Ok(c) => c,
@@ -322,7 +328,12 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         let message_text = String::from_utf8_lossy(&message_from_server);
         println!("Received message from Google: {}", message_text);
 
+        // Can be used for multiple messages
+        let (_ck_2, _mk_2) = kdf_ck(ck_1.as_bytes());
+
         rk_i = rk_i_plus_2.into();
+        large_y_i = large_y_plus_one;
+        _x_i = x_plus_1;
     }
 }
 
