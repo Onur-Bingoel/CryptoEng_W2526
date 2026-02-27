@@ -178,7 +178,6 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     key_input.extend_from_slice((lpk_s * x).to_bytes().as_bytes());
     key_input.extend_from_slice((large_y * x).to_bytes().as_bytes());
     key_input.extend_from_slice((large_y * lsk_c).to_bytes().as_bytes());
-
     let (sk, _) = crypto::key_schedule::extract(None, key_input.as_bytes());
 
     // ----------- Key Confirmation -----------
@@ -225,7 +224,104 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         mac_s.as_bytes()
     ));
     assert_eq!(mac_s.as_bytes(), expected_mac_s.as_bytes());
-    println!("Alcie: Valid MACs received.");
+    println!("Alcie: Valid MACs received.\n\n");
+
+// End of login -----------------------------------------------------------------------------------------------------------
+// Start communication -----------------------------------------------------------------------------------------------------------
+
+    // ----------- Double Ratchet -----------
+
+    let mut rk_i = sk;
+
+    loop {
+        println!("Enter a message to send to Google: ");
+        let mut message_from_user = String::new();
+        io::stdin()
+            .read_line(&mut message_from_user)
+            .expect("Error reading message_from_user");
+        let message_from_user = message_from_user.trim();
+
+
+        let x_plus_1 = Scalar::random(&mut OsRng);
+        let (rk_i_plus_1, ck_0) = kdf_rk(rk_i.as_bytes(), (large_y * x_plus_1).to_bytes().as_bytes());
+        let (_ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
+        let c1: Vec<u8> = match crypto::aead::encrypt(&mk_1.try_into().unwrap(), &aead_nonce, message_from_user.as_bytes(), &ad.to_vec()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Encrypt error: {e}");
+                return;
+            }
+        };
+
+        // Send large_x_plus_one and c1 to Google
+        let mut msg = Vec::new();
+        msg.extend_from_slice((g * x_plus_1).to_bytes().as_bytes());
+        msg.extend_from_slice(c1.as_bytes());
+        let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Encrypt error: {e}");
+                return;
+            }
+        };
+        let msg = Message::AeadCiphertext {
+            aead_payload: cypher_text
+        };
+        User::send_bytes(&mut stream, &msg);
+
+        // Receive large_x_plus_one and c1 from Alice
+        let msg = User::recv_bytes(&mut stream);
+        let aead_payload = match msg {
+            Message::AeadCiphertext { aead_payload } => aead_payload,
+            _ => panic!("Unexpected message"),
+        };
+        let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &aead_nonce, &aead_payload, &ad.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Decrypt error: {e}");
+                return;
+            }
+        };
+        if decrypted_msg.len() < 33 {
+            eprintln!("Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
+            return;
+        }
+        let (large_y_plus_one_as_bytes, c1) = decrypted_msg.split_at(33);
+        let large_y_plus_one = ProjectivePoint::from_bytes(large_y_plus_one_as_bytes.into()).unwrap();
+
+
+        // Recover the chains
+        let (rk_i_plus_2, ck_0) = kdf_rk(rk_i_plus_1.as_bytes(), (large_y_plus_one * x_plus_1).to_bytes().as_bytes());
+        let (_ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
+
+        let message_from_server: Vec<u8> = match crypto::aead::decrypt(&mk_1.try_into().unwrap(), &aead_nonce, &c1, &ad.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Decrypt error: {e}");
+                return;
+            }
+        };
+
+        let message_text = String::from_utf8_lossy(&message_from_server);
+        println!("Received message from Google: {}", message_text);
+
+        rk_i = rk_i_plus_2.into();
+    }
+}
+
+fn kdf_ck(ck_i: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let ck_i_plus_1 = compute_hmac(ck_i.as_bytes(), b"ChainKey");
+    let mk_i = compute_hmac(ck_i.as_bytes(), b"MessageKey");
+
+    (ck_i_plus_1, mk_i)
+}
+
+fn kdf_rk(rk_i: &[u8], dh: &[u8]) -> ([u8; 32], [u8; 32]) {
+    let (_, hk) = crypto::key_schedule::extract(Some(rk_i), dh);
+    let rk_i_plus_1 = crypto::key_schedule::expand::<32>(&hk, b"RootKey").unwrap();
+    let ck_i = crypto::key_schedule::expand::<32>(&hk, b"ChainKey").unwrap();
+
+    (rk_i_plus_1, ck_i)
 }
 
 fn pq_tls(
