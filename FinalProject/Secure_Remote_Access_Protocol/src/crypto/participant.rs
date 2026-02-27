@@ -17,6 +17,7 @@ pub enum Message {
         verifying_key: Vec<u8>,
     },
     AeadCiphertext {
+        nonce: [u8; 12],
         aead_payload: Vec<u8>,
     },
     SimplePayload {
@@ -29,6 +30,7 @@ pub struct DatabaseContent {
     pub lpk_c: ProjectivePoint<k256::Secp256k1>,
     pub lpk_s: ProjectivePoint<k256::Secp256k1>,
     pub lsk_s: Scalar<k256::Secp256k1>,
+    pub aead_nonce: [u8; 12],
     pub enc_client_keys: Vec<u8>
 }
 

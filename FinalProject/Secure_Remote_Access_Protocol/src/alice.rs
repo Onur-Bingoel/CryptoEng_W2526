@@ -18,10 +18,11 @@ use sha2::{Digest, Sha256};
 use sha3::Sha3_256;
 use std::io;
 use std::net::TcpStream;
+use rand_core::RngCore;
 
 pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     let mut stream = TcpStream::connect("127.0.0.1:9000").unwrap();
-    let aead_nonce: [u8; 12] = [0u8; 12];
+    let mut aead_nonce: [u8; 12] = [0u8; 12];
     let ad = b"Alice,Google,";
     let _pw = b"a random password";
     let _username: &[u8] = b"alice";
@@ -45,7 +46,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         let pw = pw.as_bytes();
 
         // Establish TLS connection
-        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = pq_tls(&mut stream, ca, aead_nonce, ad);
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = pq_tls(&mut stream, ca, ad);
 
         // Send username and password to Google
         let mut msg = Vec::new();
@@ -53,6 +54,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         msg.extend_from_slice(username);
         msg.extend_from_slice(b";");
         msg.extend_from_slice(pw);
+        OsRng.fill_bytes(&mut aead_nonce);
         let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
             Ok(c) => c,
             Err(e) => {
@@ -61,6 +63,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
             }
         };
         let msg = Message::AeadCiphertext {
+            nonce: aead_nonce,
             aead_payload: cypher_text,
         };
         User::send_bytes(&mut stream, &msg);
@@ -86,7 +89,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     // ----------- OPRF stage -----------
 
     // Establish TLS connection
-    let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, aead_nonce, ad);
+    let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
 
     // Login request
     let a = Scalar::random(&mut OsRng);
@@ -99,6 +102,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     msg.extend_from_slice(username);
     msg.extend_from_slice(b";");
     msg.extend_from_slice((h_pw * a).to_bytes().as_bytes());
+    OsRng.fill_bytes(&mut aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
@@ -107,32 +111,37 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         }
     };
     let msg = Message::AeadCiphertext {
+        nonce: aead_nonce,
         aead_payload: cypher_text,
     };
     User::send_bytes(&mut stream, &msg);
 
     // Receive AEAD(k3_s, {{h_pw^as, enc_client_keys}}) message from Google
     let msg = User::recv_bytes(&mut stream);
-    let aead_payload = match msg {
-        Message::AeadCiphertext { aead_payload } => aead_payload,
+    let (nonce, aead_payload) = match msg {
+        Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
         _ => panic!("Unexpected message"),
     };
-    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_s, &aead_nonce, &aead_payload, &ad.as_ref()) {
+    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_s, &nonce, &aead_payload, &ad.as_ref()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
             return;
         }
     };
-    let mut parts = decrypted_msg.splitn(2, |&b| b == b';');
-    let h_pw_as = ProjectivePoint::from_bytes(parts.next().unwrap_or(&[]).into()).unwrap();
-    let enc_client_keys = parts.next().unwrap_or(&[]);
+    if decrypted_msg.len() < 114 {
+        eprintln!("Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
+        return;
+    }
+    let (h_pw_as_bytes, rest_bytes) = decrypted_msg.split_at(33);
+    let h_pw_as = ProjectivePoint::from_bytes(h_pw_as_bytes.into()).unwrap();
+    let (enc_client_keys, enc_client_keys_nonce) = rest_bytes.split_at(114);
 
     // Decrypt enc_client_keys and verify correctness
     let h_pw_s = h_pw_as * a.invert().unwrap();
     let rw = Sha3_256::digest([pw.as_bytes(), h_pw_s.to_bytes().as_bytes()].concat());
     let (rw_key, _) = crypto::key_schedule::extract(None, rw.as_bytes());
-    let client_key_info = crypto::aead::decrypt(rw_key.as_ref(), &aead_nonce, enc_client_keys.as_bytes(), ad).unwrap();
+    let client_key_info = crypto::aead::decrypt(rw_key.as_ref(), &enc_client_keys_nonce.try_into().unwrap(), enc_client_keys.as_bytes(), ad).unwrap();
 
     let alice_lsk_c_bytes: [u8; 32] = client_key_info[33..65].try_into().unwrap();
     let lsk_c: Scalar = Scalar::from_repr(alice_lsk_c_bytes.into()).expect("invalid Scalar encoding for alice_lsk_c");
@@ -146,6 +155,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     // Send ephemeral_pk to Google
     let mut msg = Vec::new();
     msg.extend_from_slice((g * x).to_bytes().as_bytes());
+    OsRng.fill_bytes(&mut aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
@@ -154,17 +164,18 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         }
     };
     let msg = Message::AeadCiphertext {
+        nonce: aead_nonce,
         aead_payload: cypher_text
     };
     User::send_bytes(&mut stream, &msg);
 
     // Receive ephemeral_pk from Google
     let msg = User::recv_bytes(&mut stream);
-    let aead_payload = match msg {
-        Message::AeadCiphertext { aead_payload } => aead_payload,
+    let (nonce, aead_payload) = match msg {
+        Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
         _ => panic!("Unexpected message"),
     };
-    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_s, &aead_nonce, &aead_payload, &ad.as_ref()) {
+    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_s, &nonce, &aead_payload, &ad.as_ref()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
@@ -191,6 +202,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     let expected_mac_s = compute_hmac(ks.as_bytes(), b"Server KC");
 
     // Send mac_c to Google
+    OsRng.fill_bytes(&mut aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, mac_c.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
@@ -199,17 +211,18 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         }
     };
     let msg = Message::AeadCiphertext {
+        nonce: aead_nonce,
         aead_payload: cypher_text
     };
     User::send_bytes(&mut stream, &msg);
 
     // Receive mac_s from Google
     let msg = User::recv_bytes(&mut stream);
-    let aead_payload = match msg {
-        Message::AeadCiphertext { aead_payload } => aead_payload,
+    let (nonce, aead_payload) = match msg {
+        Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
         _ => panic!("Unexpected message"),
     };
-    let mac_s: Vec<u8> = match crypto::aead::decrypt(&k3_s, &aead_nonce, &aead_payload, &ad.as_ref()) {
+    let mac_s: Vec<u8> = match crypto::aead::decrypt(&k3_s, &nonce, &aead_payload, &ad.as_ref()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
@@ -224,7 +237,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         mac_s.as_bytes()
     ));
     assert_eq!(mac_s.as_bytes(), expected_mac_s.as_bytes());
-    println!("Alcie: Valid MACs received.\n\n");
+    println!("Alice: Valid MACs received.\n\n");
 
 // End of login -----------------------------------------------------------------------------------------------------------
 // Start communication -----------------------------------------------------------------------------------------------------------
@@ -255,8 +268,10 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
 
         // Send large_x_plus_one and c1 to Google
         let mut msg = Vec::new();
+        msg.extend_from_slice(aead_nonce.as_bytes());
         msg.extend_from_slice((g * x_plus_1).to_bytes().as_bytes());
         msg.extend_from_slice(c1.as_bytes());
+        OsRng.fill_bytes(&mut aead_nonce);
         let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
             Ok(c) => c,
             Err(e) => {
@@ -265,28 +280,30 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
             }
         };
         let msg = Message::AeadCiphertext {
+            nonce: aead_nonce,
             aead_payload: cypher_text
         };
         User::send_bytes(&mut stream, &msg);
 
         // Receive large_x_plus_one and c1 from Alice
         let msg = User::recv_bytes(&mut stream);
-        let aead_payload = match msg {
-            Message::AeadCiphertext { aead_payload } => aead_payload,
+        let (nonce, aead_payload) = match msg {
+            Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
             _ => panic!("Unexpected message"),
         };
-        let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &aead_nonce, &aead_payload, &ad.as_ref()) {
+        let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_s, &nonce, &aead_payload, &ad.as_ref()) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Decrypt error: {e}");
                 return;
             }
         };
-        if decrypted_msg.len() < 33 {
+        if decrypted_msg.len() < 45 {
             eprintln!("Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
             return;
         }
-        let (large_y_plus_one_as_bytes, c1) = decrypted_msg.split_at(33);
+        let (nonce_and_large_y_plus_one_as_bytes, c1) = decrypted_msg.split_at(45);
+        let (nonce, large_y_plus_one_as_bytes) = nonce_and_large_y_plus_one_as_bytes.split_at(12);
         let large_y_plus_one = ProjectivePoint::from_bytes(large_y_plus_one_as_bytes.into()).unwrap();
 
 
@@ -294,7 +311,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         let (rk_i_plus_2, ck_0) = kdf_rk(rk_i_plus_1.as_bytes(), (large_y_plus_one * x_plus_1).to_bytes().as_bytes());
         let (_ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
 
-        let message_from_server: Vec<u8> = match crypto::aead::decrypt(&mk_1.try_into().unwrap(), &aead_nonce, &c1, &ad.as_ref()) {
+        let message_from_server: Vec<u8> = match crypto::aead::decrypt(&mk_1.try_into().unwrap(), &nonce.try_into().unwrap(), &c1, &ad.as_ref()) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Decrypt error: {e}");
@@ -327,11 +344,12 @@ fn kdf_rk(rk_i: &[u8], dh: &[u8]) -> ([u8; 32], [u8; 32]) {
 fn pq_tls(
     mut stream: &mut TcpStream,
     ca: &mut CA,
-    aead_nonce: [u8; 12],
     ad: &[u8; 13]
-) -> ([u8; 32], [u8; 32], [u8; 32], [u8; 32], [u8; 32], [u8; 32])
-{
-    let nonce_c: [u8; 8] = [0u8; 8];
+) -> ([u8; 32], [u8; 32], [u8; 32], [u8; 32], [u8; 32], [u8; 32]) {
+
+    let mut nonce_c: [u8; 8] = [0u8; 8];
+    OsRng.fill_bytes(&mut nonce_c);
+    let mut aead_nonce: [u8; 12] = [0u8; 12];
     let (dk, ek) = MlKem768::generate(&mut OsRng);
 
     // Send nonce_c, ek to Google
@@ -367,11 +385,11 @@ fn pq_tls(
 
     // Receive and decrypt the AEAD message
     let msg = User::recv_bytes(&mut stream);
-    let aead_payload = match msg {
-        Message::AeadCiphertext { aead_payload } => aead_payload,
+    let (nonce, aead_payload) = match msg {
+        Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
         _ => panic!("Unexpected message"),
     };
-    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k1_s, &aead_nonce, &aead_payload, &ad.to_vec()) {
+    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k1_s, &nonce, &aead_payload, &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
@@ -435,6 +453,7 @@ fn pq_tls(
     let mac_c = compute_hmac(&k2_c, &Sha256::digest(&mac_c_input));
 
     // Send AEAD(k1_c, {{alice_mac_c}}) message from Alice to Google
+    OsRng.fill_bytes(&mut aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k1_c, &aead_nonce, mac_c.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
@@ -444,6 +463,7 @@ fn pq_tls(
     };
 
     let msg = Message::AeadCiphertext {
+        nonce: aead_nonce,
         aead_payload: cypher_text,
     };
     User::send_bytes(&mut stream, &msg);
