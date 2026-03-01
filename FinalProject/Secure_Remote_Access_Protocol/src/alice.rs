@@ -30,48 +30,22 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
 
 // Register password and username for Google --------------------------------------------------------------------------------------
 
-    {
-        println!("Choose username: ");
-        let mut username = String::new();
-        io::stdin()
-            .read_line(&mut username)
-            .expect("Error reading username");
-        println!("Choose password: ");
-        let mut pw = String::new();
-        io::stdin()
-            .read_line(&mut pw)
-            .expect("Error reading password");
-
-        let username = username.as_bytes();
-        let pw = pw.as_bytes();
-
-        // Establish TLS connection
-        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = pq_tls(&mut stream, ca, ad);
-
-        // Send username and password to Google
-        let mut msg = Vec::new();
-        msg.extend_from_slice(b"Register;");
-        msg.extend_from_slice(username);
-        msg.extend_from_slice(b";");
-        msg.extend_from_slice(pw);
-        OsRng.fill_bytes(&mut aead_nonce);
-        let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Encrypt error: {e}");
-                return;
-            }
-        };
-        let msg = Message::AeadCiphertext {
-            nonce: aead_nonce,
-            aead_payload: cypher_text,
-        };
-        User::send_bytes(&mut stream, &msg);
-    }
+    if register(ca, &mut stream, &mut aead_nonce, &ad) { return; }
 
 // End of registration -----------------------------------------------------------------------------------------------------------
 // Start login request -----------------------------------------------------------------------------------------------------------
 
+    if login(ca, &mut stream, &mut aead_nonce, &ad, g) { return; }
+}
+
+fn login(
+    ca: &mut CA,
+    mut stream:
+    &mut TcpStream,
+    aead_nonce: &mut [u8; 12],
+    ad: &&[u8; 13],
+    g: ProjectivePoint
+) -> bool {
     println!("Enter username: ");
     let mut username = String::new();
     io::stdin()
@@ -102,16 +76,16 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     msg.extend_from_slice(username);
     msg.extend_from_slice(b";");
     msg.extend_from_slice((h_pw * a).to_bytes().as_bytes());
-    OsRng.fill_bytes(&mut aead_nonce);
+    OsRng.fill_bytes(aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Encrypt error: {e}");
-            return;
+            return true;
         }
     };
     let msg = Message::AeadCiphertext {
-        nonce: aead_nonce,
+        nonce: *aead_nonce,
         aead_payload: cypher_text,
     };
     User::send_bytes(&mut stream, &msg);
@@ -126,12 +100,12 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
-            return;
+            return true;
         }
     };
     if decrypted_msg.len() < 114 {
         eprintln!("Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
-        return;
+        return true;
     }
     let (h_pw_as_bytes, rest_bytes) = decrypted_msg.split_at(33);
     let h_pw_as = ProjectivePoint::from_bytes(h_pw_as_bytes.into()).unwrap();
@@ -141,7 +115,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     let h_pw_s = h_pw_as * a.invert().unwrap();
     let rw = Sha3_256::digest([pw.as_bytes(), h_pw_s.to_bytes().as_bytes()].concat());
     let (rw_key, _) = crypto::key_schedule::extract(None, rw.as_bytes());
-    let client_key_info = crypto::aead::decrypt(rw_key.as_ref(), &enc_client_keys_nonce.try_into().unwrap(), enc_client_keys.as_bytes(), ad).unwrap();
+    let client_key_info = crypto::aead::decrypt(rw_key.as_ref(), &enc_client_keys_nonce.try_into().unwrap(), enc_client_keys.as_bytes(), ad.as_ref()).unwrap();
 
     let alice_lsk_c_bytes: [u8; 32] = client_key_info[33..65].try_into().unwrap();
     let lsk_c: Scalar = Scalar::from_repr(alice_lsk_c_bytes.into()).expect("invalid Scalar encoding for alice_lsk_c");
@@ -155,16 +129,16 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     // Send ephemeral_pk to Google
     let mut msg = Vec::new();
     msg.extend_from_slice((g * x).to_bytes().as_bytes());
-    OsRng.fill_bytes(&mut aead_nonce);
+    OsRng.fill_bytes(aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Encrypt error: {e}");
-            return;
+            return true;
         }
     };
     let msg = Message::AeadCiphertext {
-        nonce: aead_nonce,
+        nonce: *aead_nonce,
         aead_payload: cypher_text
     };
     User::send_bytes(&mut stream, &msg);
@@ -179,7 +153,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
-            return;
+            return true;
         }
     };
     let large_y: ProjectivePoint = ProjectivePoint::from_bytes(decrypted_msg.as_slice().try_into().unwrap()).unwrap();
@@ -202,16 +176,16 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     let expected_mac_s = compute_hmac(ks.as_bytes(), b"Server KC");
 
     // Send mac_c to Google
-    OsRng.fill_bytes(&mut aead_nonce);
+    OsRng.fill_bytes(aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, mac_c.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Encrypt error: {e}");
-            return;
+            return true;
         }
     };
     let msg = Message::AeadCiphertext {
-        nonce: aead_nonce,
+        nonce: *aead_nonce,
         aead_payload: cypher_text
     };
     User::send_bytes(&mut stream, &msg);
@@ -226,7 +200,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Decrypt error: {e}");
-            return;
+            return true;
         }
     };
 
@@ -239,8 +213,8 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     assert_eq!(mac_s.as_bytes(), expected_mac_s.as_bytes());
     println!("Alice: Valid MACs received.\n\n");
 
-// End of login -----------------------------------------------------------------------------------------------------------
-// Start communication -----------------------------------------------------------------------------------------------------------
+    // End of login -----------------------------------------------------------------------------------------------------------
+    // Start communication -----------------------------------------------------------------------------------------------------------
 
     // ----------- Double Ratchet -----------
 
@@ -264,7 +238,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Encrypt error: {e}");
-                return;
+                return true;
             }
         };
 
@@ -273,23 +247,22 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         msg.extend_from_slice(aead_nonce.as_bytes());
         msg.extend_from_slice((g * x_plus_1).to_bytes().as_bytes());
         msg.extend_from_slice(c1.as_bytes());
-        OsRng.fill_bytes(&mut aead_nonce);
+        OsRng.fill_bytes(aead_nonce);
         let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Encrypt error: {e}");
-                return;
+                return true;
             }
         };
         let msg = Message::AeadCiphertext {
-            nonce: aead_nonce,
+            nonce: *aead_nonce,
             aead_payload: cypher_text
         };
         User::send_bytes(&mut stream, &msg);
 
         // Can be used for multiple messages
         let (_ck_2, _mk_2) = kdf_ck(ck_1.as_bytes());
-
 
 
         // Receive large_x_plus_one and c1 from Alice
@@ -302,12 +275,12 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Decrypt error: {e}");
-                return;
+                return true;
             }
         };
         if decrypted_msg.len() < 45 {
             eprintln!("Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
-            return;
+            return true;
         }
         let (nonce_and_large_y_plus_one_as_bytes, c1) = decrypted_msg.split_at(45);
         let (nonce, large_y_plus_one_as_bytes) = nonce_and_large_y_plus_one_as_bytes.split_at(12);
@@ -321,7 +294,7 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Decrypt error: {e}");
-                return;
+                return true;
             }
         };
 
@@ -335,6 +308,53 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
         large_y_i = large_y_plus_one;
         _x_i = x_plus_1;
     }
+}
+
+fn register(
+    ca: &mut CA,
+    mut stream: &mut TcpStream,
+    aead_nonce: &mut [u8; 12],
+    ad: &&[u8; 13]
+) -> bool {
+    {
+        println!("Choose username: ");
+        let mut username = String::new();
+        io::stdin()
+            .read_line(&mut username)
+            .expect("Error reading username");
+        println!("Choose password: ");
+        let mut pw = String::new();
+        io::stdin()
+            .read_line(&mut pw)
+            .expect("Error reading password");
+
+        let username = username.as_bytes();
+        let pw = pw.as_bytes();
+
+        // Establish TLS connection
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = pq_tls(&mut stream, ca, ad);
+
+        // Send username and password to Google
+        let mut msg = Vec::new();
+        msg.extend_from_slice(b"Register;");
+        msg.extend_from_slice(username);
+        msg.extend_from_slice(b";");
+        msg.extend_from_slice(pw);
+        OsRng.fill_bytes(aead_nonce);
+        let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Encrypt error: {e}");
+                return true;
+            }
+        };
+        let msg = Message::AeadCiphertext {
+            nonce: *aead_nonce,
+            aead_payload: cypher_text,
+        };
+        User::send_bytes(&mut stream, &msg);
+    };
+    false
 }
 
 fn kdf_ck(ck_i: &[u8]) -> (Vec<u8>, Vec<u8>) {
