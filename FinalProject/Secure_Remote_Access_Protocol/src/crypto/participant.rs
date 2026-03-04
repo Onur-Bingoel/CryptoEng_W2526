@@ -23,6 +23,7 @@ pub enum Message {
     SimplePayload {
         payload: Vec<u8>,
     },
+    Reset {},
 }
 
 pub struct DatabaseContent {

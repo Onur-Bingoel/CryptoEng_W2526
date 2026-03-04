@@ -3,7 +3,7 @@ use crate::crypto::hash2curve::hash2curve_demo;
 use crate::crypto::hmac::{compute_hmac, verify_hmac};
 use crate::crypto::key_schedule::{key_schedule_1, key_schedule_2, key_schedule_3};
 use crate::crypto::participant::{DatabaseContent, Message, User, CA};
-use aes_gcm::aead::{OsRng};
+use aes_gcm::aead::OsRng;
 use elliptic_curve::group::GroupEncoding;
 use elliptic_curve::hash2curve::ExpandMsgXmd;
 use elliptic_curve::Field;
@@ -15,15 +15,39 @@ use ml_dsa::signature::Signer;
 use ml_dsa::{KeyGen, MlDsa65, Seed};
 use ml_kem::kem::EncapsulationKey;
 use ml_kem::{EncodedSizeUser, MlKem768Params};
+use rand_core::RngCore;
 use sha2::Sha256;
 use sha3::Sha3_256;
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
-use rand_core::RngCore;
+use std::panic;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static RECEIVED_RESET: AtomicBool = AtomicBool::new(false);
 
 pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
     let listener = TcpListener::bind("127.0.0.1:9000").unwrap();
     let (mut stream, _) = listener.accept().unwrap();
+    loop {
+        panic::set_hook(Box::new(|_| {
+        }));
+        match panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            match google_inner(ca, group_element, &mut stream) {
+                _ => panic!("Google: Error in google_inner"),
+            }
+        })) {
+            _ => {
+                if !RECEIVED_RESET.load(Ordering::Relaxed) {
+                    println!("Google: An error occurred, resetting connection...");
+                    User::send_bytes(&mut stream, &Message::Reset {});
+                };
+                RECEIVED_RESET.store(false, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream: &mut TcpStream) {
     let mut aead_nonce: [u8; 12] = [0u8; 12];
     let ad = b"Alice,Google,";
     let mut database: HashMap<Vec<u8>, DatabaseContent> = HashMap::new();
@@ -31,18 +55,31 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
 
     loop {
         // Establish TLS connection
+        println!("Google: Establishing TLS connection");
         let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
+        println!("Google: TLS connection established.");
 
         // Receive message from Alice
+        println!("Google: Waiting for message from Alice");
         let msg = User::recv_bytes(&mut stream);
         let (nonce, aead_payload) = match msg {
             Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
-            _ => panic!("Unexpected message"),
+            _ => {
+                match msg {
+                    Message::Reset {} => (),
+                    _ => {
+                        eprintln!("Google: Unexpected message");
+                        return;
+                    }
+                }
+                RECEIVED_RESET.store(true, Ordering::Relaxed);
+                panic!("Google: Unexpected message")
+            },
         };
         let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Decrypt error: {e}");
+                eprintln!("Google: Decrypt error: {e}");
                 return;
             }
         };
@@ -60,7 +97,10 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
                 g,
                 &mut username,
                 &mut content
-            ) { return; }
+            ) {
+                eprintln!("Google: Register error");
+                return; 
+            }
         } else if (action == b"Login") {
             if login(
                 k3_c,
@@ -72,9 +112,12 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
                 g,
                 &mut username,
                 &mut content
-            ) { return; }
+            ) {
+                eprintln!("Google: Login error");
+                return;
+            }
         } else {
-            eprintln!("Invalid action: {action_text}");
+            eprintln!("Google: Invalid action: {action_text}");
             return;
         }
 
@@ -93,19 +136,22 @@ fn login(
     content: &[u8]
 ) -> bool {
     // ----------- OPRF stage -----------
+    println!("Google: OPRF stage");
 
     let h_pw_a = ProjectivePoint::from_bytes(content.into()).unwrap();
 
     // Load saved data from database
+    println!("Google: Loading saved data for user: {}", String::from_utf8_lossy(username));
     let saved_data = match database.get(username) {
         Some(data) => data,
         None => {
-            eprintln!("Username not found");
+            eprintln!("Google: Username not found");
             return true;
         }
     };
 
     // Send AEAD(k3_s, {{h_pw^as, enc_client_keys}}) message from Google to Alice
+    println!("Google: Sending AEAD(k3_s, {{h_pw^as, enc_client_keys}}) message to Alice");
     let mut msg = Vec::new();
     msg.extend_from_slice((h_pw_a * saved_data.salt).to_bytes().as_bytes());
     msg.extend_from_slice(saved_data.enc_client_keys.as_slice());
@@ -114,7 +160,7 @@ fn login(
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Encrypt error: {e}");
+            eprintln!("Google: Encrypt error: {e}");
             return true;
         }
     };
@@ -130,32 +176,45 @@ fn login(
     let _lpk_s: ProjectivePoint = saved_data.lpk_s;
 
     // ----------- AKE stage: 3DH -----------
+    println!("Google: AKE stage");
 
     let y = Scalar::random(&mut OsRng);
 
     // Receive ephemeral_pk key from Alice
+    println!("Google: Waiting for ephemeral_pk from Alice");
     let msg = User::recv_bytes(&mut stream);
     let (nonce, aead_payload) = match msg {
         Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
-        _ => panic!("Unexpected message"),
+        _ => {
+            match msg {
+                Message::Reset {} => (),
+                _ => {
+                    eprintln!("Google: Unexpected message");
+                    return true;
+                }
+            }
+            RECEIVED_RESET.store(true, Ordering::Relaxed);
+            panic!("Google: Unexpected message")
+        },
     };
     let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Decrypt error: {e}");
+            eprintln!("Google: Decrypt error: {e}");
             return true;
         }
     };
     let large_x: ProjectivePoint = ProjectivePoint::from_bytes(decrypted_msg.as_slice().try_into().unwrap()).unwrap();
 
     // Send ephemeral_pk key to Alice
+    println!("Google: Sending ephemeral_pk key to Alice");
     let mut msg = Vec::new();
     msg.extend_from_slice((g * y).to_bytes().as_bytes());
     OsRng.fill_bytes(aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Encrypt error: {e}");
+            eprintln!("Google: Encrypt error: {e}");
             return true;
         }
     };
@@ -166,6 +225,7 @@ fn login(
     User::send_bytes(&mut stream, &msg);
 
     // 3DH-KServer (𝑏, 𝑦, 𝐴, 𝑋)
+    println!("Google: Calculating SK");
     let mut key_input = Vec::new();
     key_input.extend_from_slice((large_x * lsk_s).to_bytes().as_bytes());
     key_input.extend_from_slice((large_x * y).to_bytes().as_bytes());
@@ -173,8 +233,10 @@ fn login(
     let (sk, _) = crypto::key_schedule::extract(None, key_input.as_bytes());
 
     // ----------- Key Confirmation -----------
+    println!("Google: Key Confirmation stage");
 
     // Calculate mac_s
+    println!("Google: Calculating mac_s");
     let (_, hk) = crypto::key_schedule::extract(None, sk.as_bytes());
     let combined_key = crypto::key_schedule::expand::<64>(&hk, b"Key Confirmation").unwrap();
     let (kc, ks) = combined_key.split_at(32);
@@ -183,25 +245,37 @@ fn login(
     let expected_mac_c = compute_hmac(kc.as_bytes(), b"Client KC");
 
     // Receive mac_c from Alice
+    println!("Google: Waiting for mac_c from Alice");
     let msg = User::recv_bytes(&mut stream);
     let (nonce, aead_payload) = match msg {
         Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
-        _ => panic!("Unexpected message"),
+        _ => {
+            match msg {
+                Message::Reset {} => (),
+                _ => {
+                    eprintln!("Google: Unexpected message");
+                    return true;
+                }
+            }
+            RECEIVED_RESET.store(true, Ordering::Relaxed);
+            panic!("Google: Unexpected message")
+        },
     };
     let mac_c: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Decrypt error: {e}");
+            eprintln!("Google: Decrypt error: {e}");
             return true;
         }
     };
 
     // Send mac_s to Alice
+    println!("Google: Sending mac_s to Alice");
     OsRng.fill_bytes(aead_nonce);
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, mac_s.as_bytes(), &ad.to_vec()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Encrypt error: {e}");
+            eprintln!("Google: Encrypt error: {e}");
             return true;
         }
     };
@@ -212,6 +286,7 @@ fn login(
     User::send_bytes(&mut stream, &msg);
 
     // Verify mac_c
+    println!("Google: Verifying mac_c");
     assert!(verify_hmac(
         kc.as_bytes(),
         b"Client KC",
@@ -224,27 +299,39 @@ fn login(
     // Start communication -----------------------------------------------------------------------------------------------------------
 
     // ----------- Double Ratchet -----------
+    println!("Google: Double Ratchet stage");
 
     let mut rk_i = sk;
     let mut _large_x_i = large_x;
     let mut y_i = y;
 
     loop {
-        // Receive large_x_plus_one and c1 from Alice
+        // Receive large_x_i_plus_one and c1 from Alice
+        println!("Google: Waiting for X_i+1 and c1 from Alice");
         let msg = User::recv_bytes(&mut stream);
         let (nonce, aead_payload) = match msg {
             Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
-            _ => panic!("Unexpected message"),
+            _ => {
+                match msg {
+                    Message::Reset {} => (),
+                    _ => {
+                        eprintln!("Google: Unexpected message");
+                        return true;
+                    }
+                }
+                RECEIVED_RESET.store(true, Ordering::Relaxed);
+                panic!("Google: Unexpected message")
+            },
         };
         let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Decrypt error: {e}");
+                eprintln!("Google: Decrypt error: {e}");
                 return true;
             }
         };
         if decrypted_msg.len() < 45 {
-            eprintln!("Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
+            eprintln!("Google: Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
             return true;
         }
         let (nonce_and_large_x_plus_one_as_bytes, c1) = decrypted_msg.split_at(45);
@@ -252,13 +339,14 @@ fn login(
         let large_x_plus_one = ProjectivePoint::from_bytes(large_x_plus_one_as_bytes.into()).unwrap();
 
         // Recover the chains
+        println!("Google: Recovering chains");
         let (rk_i_plus_1, ck_0) = kdf_rk(rk_i.as_bytes(), (large_x_plus_one * y_i).to_bytes().as_bytes());
         let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
 
         let message_from_user: Vec<u8> = match crypto::aead::decrypt(&mk_1.try_into().unwrap(), &nonce.try_into().unwrap(), &c1, &ad.as_ref()) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Decrypt error: {e}");
+                eprintln!("Google: Decrypt error: {e}");
                 return true;
             }
         };
@@ -272,28 +360,30 @@ fn login(
 
 
         // Encrypt message_from_server with DH Ratchet and Sym Ratchet
-        let y_plus_1 = Scalar::random(&mut OsRng);
-        let (rk_i_plus_2, ck_0) = kdf_rk(rk_i_plus_1.as_bytes(), (large_x_plus_one * y_plus_1).to_bytes().as_bytes());
+        println!("Google: Encrypting message_from_server with DH Ratchet and Sym Ratchet");
+        let y_i_plus_1 = Scalar::random(&mut OsRng);
+        let (rk_i_plus_2, ck_0) = kdf_rk(rk_i_plus_1.as_bytes(), (large_x_plus_one * y_i_plus_1).to_bytes().as_bytes());
         let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
         OsRng.fill_bytes(aead_nonce);
         let c1: Vec<u8> = match crypto::aead::encrypt(&mk_1.try_into().unwrap(), &aead_nonce, message_from_server.as_bytes(), &ad.to_vec()) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Encrypt error: {e}");
+                eprintln!("Google: Encrypt error: {e}");
                 return true;
             }
         };
 
-        // Send large_y_plus_one and c1 to Alice
+        // Send large_y_i_plus_one and c1 to Alice
+        println!("Google: Sending Y_i+1 and c1 to Alice");
         let mut msg = Vec::new();
         msg.extend_from_slice(aead_nonce.as_bytes());
-        msg.extend_from_slice((g * y_plus_1).to_bytes().as_bytes());
+        msg.extend_from_slice((g * y_i_plus_1).to_bytes().as_bytes());
         msg.extend_from_slice(c1.as_bytes());
         OsRng.fill_bytes(aead_nonce);
         let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Encrypt error: {e}");
+                eprintln!("Google: Encrypt error: {e}");
                 return true;
             }
         };
@@ -308,7 +398,7 @@ fn login(
 
         rk_i = rk_i_plus_2.into();
         _large_x_i = large_x_plus_one;
-        y_i = y_plus_1;
+        y_i = y_i_plus_1;
     }
 }
 
@@ -324,6 +414,7 @@ fn register(
     {
 
         // Calculate client_key_info and save in database
+        println!("Google: Registering user: {}", String::from_utf8_lossy(username));
         let s = Scalar::random(&mut OsRng);
         let h_pw: ProjectivePoint =
             hash2curve_demo::<k256::Secp256k1, ExpandMsgXmd<Sha3_256>>(password)
@@ -358,6 +449,7 @@ fn register(
             aead_nonce: *aead_nonce,
             enc_client_keys,
         });
+        println!("Google: Client keys saved.");
     };
     false
 }
@@ -388,10 +480,21 @@ fn pq_tls(
     let mut aead_nonce: [u8; 12] = [0u8; 12];
 
     // Receive PqtlsClientHello from Alive
+    println!("Google: Waiting for PqtlsClientHello from Alice");
     let msg = User::recv_bytes(&mut stream);
     let (nonce_c, ek_bytes) = match msg {
         Message::PqtlsClientHello { nonce_c, ek } => (nonce_c, ek),
-        _ => panic!("Unexpected message"),
+        _ => {
+            match msg {
+                Message::Reset {} => (),
+                _ => {
+                    eprintln!("Google: Unexpected message");
+                    return ([0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32]);
+                }
+            }
+            RECEIVED_RESET.store(true, Ordering::Relaxed);
+            panic!("Google: Unexpected message")
+        },
     };
     const EK768_LEN: usize = 1184;
     let ek_arr: [u8; EK768_LEN] = ek_bytes.as_slice().try_into()
@@ -399,10 +502,12 @@ fn pq_tls(
     let ek = EncapsulationKey::<MlKem768Params>::from_bytes((&ek_arr).as_ref());
 
     // Generate key pair and calculate shared key and ciphertext
+    println!("Google: Generating key pair and calculating shared key and ciphertext");
     let key_pair = MlDsa65::from_seed(&Seed::default());
     let (ct, shared_key) = ek.encapsulate(&mut OsRng).unwrap();
 
     // Calculate K1_c, K1_s, K2_c, K2_s
+    println!("Google: Calculating K1_c, K1_s, K2_c, K2_s");
     let (k1_c, k1_s) = key_schedule_1(shared_key.as_bytes());
     let (k2_c, k2_s) = key_schedule_2(
         nonce_c.clone().as_bytes(),
@@ -413,9 +518,11 @@ fn pq_tls(
     );
 
     // Get certificate for google's public key
+    println!("Google: Getting certificate for google's public key");
     let cert = ca.generate_certificate(key_pair.verifying_key().encode().as_bytes());
 
     // Calculate google's signature
+    println!("Google: Calculating google's signature");
     let mut sign_digest_input = Vec::new();
     sign_digest_input.extend_from_slice(nonce_c.clone().as_bytes());
     sign_digest_input.extend_from_slice(ek.as_bytes().as_bytes());
@@ -426,6 +533,7 @@ fn pq_tls(
     let google_sign = key_pair.signing_key().sign(&Sha256::digest(&sign_digest_input));
 
     // Calculate google's MAC tag
+    println!("Google: Calculating google's MAC tag");
     let mut mac_s_input = Vec::new();
     mac_s_input.extend_from_slice(nonce_c.clone().as_bytes());
     mac_s_input.extend_from_slice(ek.as_bytes().as_bytes());
@@ -438,6 +546,7 @@ fn pq_tls(
     let mac_s = compute_hmac(&k2_s, &Sha256::digest(&mac_s_input));
 
     // Calculate K3_c, K3_s
+    println!("Google: Calculating K3_c, K3_s");
     let (k3_c, k3_s) = key_schedule_3(
         nonce_c.clone().as_bytes(),
         ek.as_bytes().as_bytes(),
@@ -449,7 +558,8 @@ fn pq_tls(
         mac_s.as_bytes(),
     );
 
-    // Send nonce_s, ct from Google to Alice
+    // Send nonce_s, ct, verifying_key from Google to Alice
+    println!("Google: Sending nonce_s, ct, verifying_key from Google to Alice");
     let msg = Message::PqtlsServerHello {
         nonce_s: nonce_s.to_vec(),
         ct: ct.as_bytes().to_vec(),
@@ -457,7 +567,8 @@ fn pq_tls(
     };
     User::send_bytes(&mut stream, &msg);
 
-    // Send AEAD(k1_s, {{cert_pk_s , sign_s, mac_s}}) message from Google to Alice
+    // Send AEAD(k1_s, {{cert , google_sign, mac_s}}) message from Google to Alice
+    println!("Google: Sending AEAD(k1_s, {{cert , google_sign, mac_s}}) message from Google to Alice");
     let mut msg = Vec::new();
     msg.extend_from_slice(cert.encode().as_bytes());
     msg.extend_from_slice(google_sign.encode().as_bytes());
@@ -466,7 +577,7 @@ fn pq_tls(
     let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k1_s, &aead_nonce, msg.as_bytes(), &ad.as_ref()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Encrypt error: {e}");
+            eprintln!("Google: Encrypt error: {e}");
             return ([0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32]);
         }
     };
@@ -479,20 +590,32 @@ fn pq_tls(
 
 
     // Receive and decrypt the AEAD message
+    println!("Google: Receiving and decrypting the AEAD message");
     let msg = User::recv_bytes(&mut stream);
     let (nonce, aead_payload) = match msg {
         Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
-        _ => panic!("Unexpected message"),
+        _ => {
+            match msg {
+                Message::Reset {} => (),
+                _ => {
+                    eprintln!("Google: Unexpected message");
+                    return ([0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32]);
+                }
+            }
+            RECEIVED_RESET.store(true, Ordering::Relaxed);
+            panic!("Google: Unexpected message")
+        },
     };
     let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k1_c, &nonce, &aead_payload, &ad.as_ref()) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Decrypt error: {e}");
+            eprintln!("Google: Decrypt error: {e}");
             return ([0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32], [0u8; 32]);
         }
     };
 
     // Verify the MAC tag from Alice
+    println!("Google: Verifying the MAC tag from Alice");
     let mut expected_mac_c_input = Vec::new();
     expected_mac_c_input.extend_from_slice(nonce_c.clone().as_bytes());
     expected_mac_c_input.extend_from_slice(ek.as_bytes().as_bytes());
