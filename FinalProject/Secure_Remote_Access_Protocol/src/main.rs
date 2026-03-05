@@ -1,28 +1,19 @@
-use crate::alice::alice;
-use crate::crypto::hash2curve::hash2curve_demo;
 use crate::crypto::participant;
-use crate::google::google;
-use elliptic_curve::hash2curve::ExpandMsgXmd;
-use image::EncodableLayout;
+use elliptic_curve::Group;
 use k256::ProjectivePoint;
-use rand::RngCore;
-use sha3::Sha3_256;
+use rand_core::OsRng;
+use crate::client::alice::alice;
+use crate::server::google::google;
 
 mod crypto;
-mod alice;
-mod google;
 mod tests;
+mod client;
+mod server;
 
 fn main() {
     let mut ca = participant::CA::new();
     let mut ca_clone = ca.clone();
-
-    let len = 16;
-    let mut random_bytes = vec![0u8; len];
-    rand::rng().fill_bytes(&mut random_bytes);
-    let mut g: ProjectivePoint =
-        hash2curve_demo::<k256::Secp256k1, ExpandMsgXmd<Sha3_256>>(random_bytes.as_bytes())
-            .expect("hash2curve_demo (k256 + SHA3-256) failed");
+    let mut g: ProjectivePoint = ProjectivePoint::random(&mut OsRng);
 
     let handle = std::thread::spawn(move || {
         google(&mut ca_clone, &mut g);

@@ -323,7 +323,16 @@ pub(crate) fn login(
     }
 }
 
-pub(crate) fn inner_double_ratchet(k3_c: &[u8; 32], k3_s: &[u8; 32], mut stream: &mut &mut TcpStream, aead_nonce: &mut [u8; 12], ad: &&&[u8; 13], g: ProjectivePoint, mut rk_i: Output<Sha256>, mut y_i: Scalar) -> Result<(ProjectivePoint, Scalar, [u8; 32], String), bool> {
+pub(crate) fn inner_double_ratchet(
+    k3_c: &[u8; 32],
+    k3_s: &[u8; 32],
+    mut stream: &mut &mut TcpStream,
+    aead_nonce: &mut [u8; 12],
+    ad: &&&[u8; 13],
+    g: ProjectivePoint, 
+    mut rk_i: Output<Sha256>,
+    mut y_i: Scalar
+) -> Result<(ProjectivePoint, Scalar, [u8; 32], String), bool> {
     // Receive large_x_i_plus_one and c1 from Alice
     // println!("Google: Waiting for X_i+1 and c1 from Alice");
     let msg = User::recv_bytes(&mut stream);

@@ -77,7 +77,6 @@ pub fn alice_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream:
                         }
                     },
                     "Register" => {
-                        println!("Username: {}, Password: {}", username.trim(), pw.trim());
                         if register(ca, &mut stream, &mut aead_nonce, &ad, &username, &pw) {
                             eprintln!("Alice: Register error");
                             return;
@@ -319,7 +318,7 @@ pub fn login(
             .expect("Error reading message_from_user");
         let message_from_user = message_from_user.trim();
 
-        let (x_i_plus_1, large_y_plus_one, rk_i_plus_2) = match inner_double_ratchet(&mut stream, aead_nonce, &ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_from_user) {
+        let (x_i_plus_1, large_y_plus_one, rk_i_plus_2, _) = match inner_double_ratchet(&mut stream, aead_nonce, &ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_from_user) {
             Ok(value) => value,
             Err(value) => return value,
         };
@@ -335,7 +334,17 @@ pub fn login(
     }
 }
 
-pub(crate) fn inner_double_ratchet(mut stream: &mut &mut TcpStream, aead_nonce: &mut [u8; 12], ad: &&&[u8; 13], g: ProjectivePoint, k3_c: &[u8; 32], k3_s: &[u8; 32], mut rk_i: Output<Sha256>, mut large_y_i: ProjectivePoint, message_from_user: &str) -> Result<(Scalar, ProjectivePoint, [u8; 32]), bool> {
+pub(crate) fn inner_double_ratchet(
+    mut stream: &mut &mut TcpStream,
+    aead_nonce: &mut [u8; 12],
+    ad: &&&[u8; 13],
+    g: ProjectivePoint,
+    k3_c: &[u8; 32],
+    k3_s: &[u8; 32],
+    mut rk_i: Output<Sha256>,
+    mut large_y_i: ProjectivePoint,
+    message_from_user: &str
+) -> Result<(Scalar, ProjectivePoint, [u8; 32], String), bool> {
     // Calculate the new ratchet keys and encrypt the message using mk_1
     println!("Alice: Calculating new ratchet keys");
     let x_i_plus_1 = Scalar::random(&mut OsRng);
@@ -423,7 +432,7 @@ pub(crate) fn inner_double_ratchet(mut stream: &mut &mut TcpStream, aead_nonce: 
 
     // Can be used for multiple messages
     let (_ck_2, _mk_2) = kdf_ck(ck_1.as_bytes());
-    Ok((x_i_plus_1, large_y_plus_one, rk_i_plus_2))
+    Ok((x_i_plus_1, large_y_plus_one, rk_i_plus_2, format!("{}", message_text)))
 }
 
 pub(crate) fn register(
@@ -437,8 +446,6 @@ pub(crate) fn register(
     {
         let username = username.as_bytes();
         let pw = pw.as_bytes();
-
-        println!("Username: {:?}, Password: {:?}", username, pw);
 
         // Establish TLS connection
         println!("Alice: Establishing TLS connection");
@@ -484,7 +491,7 @@ fn kdf_rk(rk_i: &[u8], dh: &[u8]) -> ([u8; 32], [u8; 32]) {
     (rk_i_plus_1, ck_i)
 }
 
-fn pq_tls(
+pub(crate) fn pq_tls(
     mut stream: &mut TcpStream,
     ca: &mut CA,
     ad: &[u8; 13]
