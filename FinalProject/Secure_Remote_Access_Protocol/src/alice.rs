@@ -309,6 +309,7 @@ pub fn login(
     let mut large_y_i = large_y;
     let mut _x_i = x;
 
+    #[cfg(not(test))]
     loop {
         println!("Enter a message to send to Google: ");
         let mut message_from_user = String::new();
@@ -408,6 +409,11 @@ pub fn login(
         rk_i = rk_i_plus_2.into();
         large_y_i = large_y_plus_one;
         _x_i = x_i_plus_1;
+    }
+
+    #[cfg(test)]
+    {
+        return false
     }
 }
 

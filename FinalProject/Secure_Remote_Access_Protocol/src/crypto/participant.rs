@@ -36,16 +36,10 @@ pub struct DatabaseContent {
 }
 
 pub struct User {
-    pub(crate) name: String,
+    
 }
 
 impl User {
-
-    pub fn new(name: String) -> Self {
-        User {
-            name,
-        }
-    }
 
     pub fn send_bytes(stream: &mut TcpStream, msg: &Message) {
         let data = bincode::serialize(msg).unwrap();

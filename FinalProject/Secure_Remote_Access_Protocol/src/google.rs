@@ -89,7 +89,7 @@ pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream
         let mut username = parts.next().unwrap_or(&[]);
         let mut content = parts.next().unwrap_or(&[]);
 
-        if (action == b"Register") {
+        if action == b"Register" {
             if register(
                 &mut aead_nonce,
                 &ad,
@@ -101,7 +101,7 @@ pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream
                 eprintln!("Google: Register error");
                 return; 
             }
-        } else if (action == b"Login") {
+        } else if action == b"Login" {
             if login(
                 k3_c,
                 k3_s,
@@ -124,7 +124,7 @@ pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream
     }
 }
 
-fn login(
+pub(crate) fn login(
     k3_c: [u8; 32],
     k3_s: [u8; 32],
     mut stream: &mut TcpStream,
@@ -305,6 +305,7 @@ fn login(
     let mut _large_x_i = large_x;
     let mut y_i = y;
 
+    #[cfg(not(test))]
     loop {
         // Receive large_x_i_plus_one and c1 from Alice
         println!("Google: Waiting for X_i+1 and c1 from Alice");
@@ -400,10 +401,15 @@ fn login(
         _large_x_i = large_x_plus_one;
         y_i = y_i_plus_1;
     }
+
+    #[cfg(test)]
+    {
+        return false;
+    }
 }
 
-fn register(
-    mut aead_nonce:
+pub(crate) fn register(
+    aead_nonce:
     &mut [u8; 12],
     ad: &&[u8; 13],
     database: &mut HashMap<Vec<u8>, DatabaseContent>,
@@ -469,7 +475,7 @@ fn kdf_rk(rk_i: &[u8], dh: &[u8]) -> ([u8; 32], [u8; 32]) {
     (rk_i_plus_1, ck_i)
 }
 
-fn pq_tls(
+pub(crate) fn pq_tls(
     mut stream: &mut TcpStream,
     ca: &mut CA,
     ad: &[u8; 13]

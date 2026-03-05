@@ -11,7 +11,7 @@ use sha3::Sha3_256;
 mod crypto;
 mod alice;
 mod google;
-mod gui;
+mod tests;
 
 fn main() {
     let mut ca = participant::CA::new();
