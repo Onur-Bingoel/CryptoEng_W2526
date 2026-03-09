@@ -1,8 +1,7 @@
 mod tests {
-    use crate::client::alice;
-    use crate::server::google;
+    use crate::client::pqtls::pq_tls;
     use crate::crypto::participant::{DatabaseContent, Message, User, CA};
-    use crate::{crypto};
+    use crate::{client, crypto, server};
     use elliptic_curve::{Field, Group};
     use hmac::digest::Output;
     use image::EncodableLayout;
@@ -32,8 +31,11 @@ mod tests {
         let username = "alice";
         let pw = "12345";
 
-        assert!(!alice::register(&mut ca, &mut stream, &mut aead_nonce, &ad, &username, &pw));
-        assert!(!alice::login(&mut ca, &mut stream, &mut aead_nonce, &ad, g, &username, &pw));
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = pq_tls(&mut stream, &mut ca, ad);
+        assert!(!client::opaque_register::register(k3_c, &mut stream, &mut aead_nonce, &ad, &username, &pw));
+
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, &mut ca, ad);
+        assert!(!client::opaque_login::login(k3_c, k3_s, &mut stream, &mut aead_nonce, &ad, g, &username, &pw));
 
         drop(stream);
 
@@ -50,7 +52,7 @@ mod tests {
         let ad = b"Alice,Google,";
         let mut database: HashMap<Vec<u8>, DatabaseContent> = HashMap::new();
 
-        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = google::pq_tls(&mut stream, ca, ad);
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = server::pqtls::pq_tls(&mut stream, ca, ad);
 
         let msg = User::recv_bytes(&mut stream);
         let (nonce, aead_payload) = match msg {
@@ -69,7 +71,7 @@ mod tests {
         let mut username = parts.next().unwrap_or(&[]);
         let mut content = parts.next().unwrap_or(&[]);
 
-        assert!(!google::register(
+        assert!(!server::opaque_register::register(
             &mut aead_nonce,
             &ad,
             &mut database,
@@ -78,7 +80,7 @@ mod tests {
             &mut content
         ));
 
-        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = google::pq_tls(&mut stream, ca, ad);
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = server::pqtls::pq_tls(&mut stream, ca, ad);
 
         let msg = User::recv_bytes(&mut stream);
         let (nonce, aead_payload) = match msg {
@@ -97,7 +99,7 @@ mod tests {
         let mut username = parts.next().unwrap_or(&[]);
         let mut content = parts.next().unwrap_or(&[]);
 
-        assert!(!google::login(
+        assert!(!server::opaque_login::login(
             k3_c,
             k3_s,
             &mut stream,
@@ -146,7 +148,7 @@ mod tests {
 
 
         let (x_i_plus_1, large_y_plus_one, rk_i_plus_2, output) =
-            match alice::inner_double_ratchet(&mut&mut stream, aead_nonce, &&ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_1_from_user) {
+            match client::double_ratchet::double_ratchet_iteration(&mut&mut stream, aead_nonce, &&ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_1_from_user) {
             Ok(value) => value,
             Err(value) => panic!("Alice: Error in inner_double_ratchet: {value}"),
         };
@@ -158,7 +160,7 @@ mod tests {
         x_i = x_i_plus_1;
 
         let (_, _, _, output_2) =
-        match alice::inner_double_ratchet(&mut&mut stream, aead_nonce, &&ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_2_from_user) {
+        match client::double_ratchet::double_ratchet_iteration(&mut&mut stream, aead_nonce, &&ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_2_from_user) {
             Ok(value) => value,
             Err(value) => panic!("Alice: Error in inner_double_ratchet: {value}"),
         };
@@ -183,7 +185,7 @@ mod tests {
         let mut _large_x_i = g.clone() * x_i.clone();
         let mut y_i = y_i;
 
-        let (large_x_plus_one, y_i_plus_1, mut rk_i_plus_2, output) = match google::inner_double_ratchet(&k3_c, &k3_s, &mut &mut stream, aead_nonce, &&ad, *g, *rk_i, *y_i) {
+        let (large_x_plus_one, y_i_plus_1, mut rk_i_plus_2, output) = match server::double_ratchet::double_ratchet_iteration(&k3_c, &k3_s, &mut &mut stream, aead_nonce, &&ad, *g, *rk_i, *y_i) {
             Ok(value) => value,
             Err(value) => panic!("Google: Error in inner_double_ratchet: {value}"),
         };
@@ -194,7 +196,7 @@ mod tests {
         _large_x_i = large_x_plus_one;
         *y_i = y_i_plus_1;
 
-        let (_, _, _, output_2) = match google::inner_double_ratchet(&k3_c, &k3_s, &mut &mut stream, aead_nonce, &&ad, *g, *rk_i, *y_i) {
+        let (_, _, _, output_2) = match server::double_ratchet::double_ratchet_iteration(&k3_c, &k3_s, &mut &mut stream, aead_nonce, &&ad, *g, *rk_i, *y_i) {
             Ok(value) => value,
             Err(value) => panic!("Google: Error in inner_double_ratchet: {value}"),
         };
@@ -214,7 +216,7 @@ mod tests {
         let handle = std::thread::spawn(move || {
             let listener = TcpListener::bind("127.0.0.1:9003").unwrap();
             let (mut stream, _) = listener.accept().unwrap();
-            let (k1_c, k1_s, k2_c, k2_s, k3_c, k3_s) = google::pq_tls(&mut stream, &mut ca_clone, ad);
+            let (k1_c, k1_s, k2_c, k2_s, k3_c, k3_s) = server::pqtls::pq_tls(&mut stream, &mut ca_clone, ad);
 
             drop(stream);
             drop(listener);
@@ -226,7 +228,7 @@ mod tests {
 
         let mut stream = TcpStream::connect("127.0.0.1:9003").unwrap();
 
-        let (alice_k1_c, alice_k1_s, alice_k2_c, alice_k2_s, alice_k3_c, alice_k3_s) = alice::pq_tls(&mut stream, &mut ca, ad);
+        let (alice_k1_c, alice_k1_s, alice_k2_c, alice_k2_s, alice_k3_c, alice_k3_s) = client::pqtls::pq_tls(&mut stream, &mut ca, ad);
 
         let result = handle.join().unwrap();
         let (google_k1_c, google_k1_s, google_k2_c, google_k2_s, google_k3_c, google_k3_s) = result;

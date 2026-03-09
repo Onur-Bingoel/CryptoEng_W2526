@@ -1,9 +1,10 @@
-use crate::crypto::participant;
-use elliptic_curve::Group;
-use k256::ProjectivePoint;
-use rand_core::OsRng;
 use crate::client::alice::alice;
+use crate::crypto::participant;
+use crate::server::google;
 use crate::server::google::google;
+use elliptic_curve::Group;
+use inquire::Select;
+use k256::ProjectivePoint;
 
 mod crypto;
 mod tests;
@@ -12,16 +13,34 @@ mod server;
 
 fn main() {
     let mut ca = participant::CA::new();
-    let mut ca_clone = ca.clone();
-    let mut g: ProjectivePoint = ProjectivePoint::random(&mut OsRng);
+    let mut g: ProjectivePoint = ProjectivePoint::default();
 
-    let handle = std::thread::spawn(move || {
-        google(&mut ca_clone, &mut g);
-    });
+    let options = vec!["Server", "Client", "Automatic"];
+    let selection = Select::new("What do you want to start?", options.clone()).prompt();
 
-    std::thread::sleep(std::time::Duration::from_millis(500));
 
-    alice(&mut ca, &mut g);
+    match selection {
+        Ok(choice) => {
+            match choice {
+                "Server" => google(&mut ca, &mut g),
+                "Client" => alice(&mut ca, &mut g),
+                "Automatic" => {
+                    google::DISABLE_PRINT.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let mut ca_clone = ca.clone();
+                    let handle = std::thread::spawn(move || {
+                        google(&mut ca_clone, &mut g);
+                    });
+                    alice(&mut ca, &mut g);
 
-    handle.join().unwrap();
+                    handle.join().unwrap();
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        Err(_) => {
+            println!("Error: Invalid input");
+            return;
+        }
+    }
 }
