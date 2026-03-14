@@ -1,20 +1,15 @@
-use crate::crypto;
-use crate::crypto::hmac::compute_hmac;
+use crate::crypto::key_schedule::{kdf_ck, kdf_rk};
 use crate::crypto::participant::{Message, User};
-use crate::server::google;
+use crate::server::google::{decrypt, encrypt, println, reconstruct_aead_message};
 use aes_gcm::aead::OsRng;
 use elliptic_curve::group::GroupEncoding;
 use elliptic_curve::Field;
-use hmac::digest::{Digest, Output};
+use hmac::digest::Output;
 use image::EncodableLayout;
 use k256::{ProjectivePoint, Scalar};
-use ml_kem::EncodedSizeUser;
 use rand_core::RngCore;
 use sha2::Sha256;
 use std::net::TcpStream;
-use std::panic;
-use std::sync::atomic::Ordering;
-use crate::server::google::println;
 
 pub(crate) fn double_ratchet_iteration(
     k3_c: &[u8; 32],
@@ -29,26 +24,13 @@ pub(crate) fn double_ratchet_iteration(
     // Receive large_x_i_plus_one and c1 from Alice
     println("Google: Waiting for X_i+1 and c1 from Alice");
     let msg = User::recv_bytes(&mut stream);
-    let (nonce, aead_payload) = match msg {
-        Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
-        _ => {
-            match msg {
-                Message::Reset {} => (),
-                _ => {
-                    eprintln!("Google: Unexpected message");
-                    return Err(true);
-                }
-            }
-            google::RECEIVED_RESET.store(true, Ordering::Relaxed);
-            panic!("Google: Unexpected message")
-        },
+    let (nonce, aead_payload) = match reconstruct_aead_message(msg) {
+        Ok(value) => value,
+        Err(value) => return Err(value),
     };
-    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Decrypt error: {e}");
-            return Err(true);
-        }
+    let decrypted_msg = match decrypt(&k3_c, &ad, &nonce, &aead_payload) {
+        Ok(value) => value,
+        Err(value) => return Err(value),
     };
     if decrypted_msg.len() < 45 {
         eprintln!("Google: Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
@@ -63,12 +45,9 @@ pub(crate) fn double_ratchet_iteration(
     let (rk_i_plus_1, ck_0) = kdf_rk(rk_i.as_bytes(), (large_x_plus_one * y_i).to_bytes().as_bytes());
     let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
 
-    let message_from_user: Vec<u8> = match crypto::aead::decrypt(&mk_1.try_into().unwrap(), &nonce.try_into().unwrap(), &c1, &ad.as_ref()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Decrypt error: {e}");
-            return Err(true);
-        }
+    let message_from_user = match decrypt(&mk_1.try_into().unwrap(), &ad, &nonce.try_into().unwrap(), &Vec::from(c1)) {
+        Ok(value) => value,
+        Err(value) => return Err(value),
     };
 
     // Echo message_from_user
@@ -85,12 +64,9 @@ pub(crate) fn double_ratchet_iteration(
     let (rk_i_plus_2, ck_0) = kdf_rk(rk_i_plus_1.as_bytes(), (large_x_plus_one * y_i_plus_1).to_bytes().as_bytes());
     let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
     OsRng.fill_bytes(aead_nonce);
-    let c1: Vec<u8> = match crypto::aead::encrypt(&mk_1.try_into().unwrap(), &aead_nonce, message_from_server.as_bytes(), &ad.to_vec()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Encrypt error: {e}");
-            return Err(true);
-        }
+    let c1: Vec<u8> = match encrypt(&mk_1.try_into().unwrap(), &aead_nonce, &ad, Vec::from(message_from_server.as_bytes())) {
+        Ok(value) => value,
+        Err(value) => return Err(value),
     };
 
     // Send large_y_i_plus_one and c1 to Alice
@@ -100,12 +76,9 @@ pub(crate) fn double_ratchet_iteration(
     msg.extend_from_slice((g * y_i_plus_1).to_bytes().as_bytes());
     msg.extend_from_slice(c1.as_bytes());
     OsRng.fill_bytes(aead_nonce);
-    let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Encrypt error: {e}");
-            return Err(true);
-        }
+    let cypher_text = match encrypt(&k3_s, &aead_nonce, &ad, msg) {
+        Ok(value) => value,
+        Err(value) => return Err(value),
     };
     let msg = Message::AeadCiphertext {
         nonce: *aead_nonce,
@@ -116,19 +89,4 @@ pub(crate) fn double_ratchet_iteration(
     // Can be used for multiple messages
     let (_ck_2, _mk_2) = kdf_ck(ck_1.as_bytes());
     Ok((large_x_plus_one, y_i_plus_1, rk_i_plus_2, format!("{}", message_text)))
-}
-
-fn kdf_ck(ck_i: &[u8]) -> (Vec<u8>, Vec<u8>) {
-    let ck_i_plus_1 = compute_hmac(ck_i.as_bytes(), b"ChainKey");
-    let mk_i = compute_hmac(ck_i.as_bytes(), b"MessageKey");
-
-    (ck_i_plus_1, mk_i)
-}
-
-fn kdf_rk(rk_i: &[u8], dh: &[u8]) -> ([u8; 32], [u8; 32]) {
-    let (_, hk) = crypto::key_schedule::extract(Some(rk_i), dh);
-    let rk_i_plus_1 = crypto::key_schedule::expand::<32>(&hk, b"RootKey").unwrap();
-    let ck_i = crypto::key_schedule::expand::<32>(&hk, b"ChainKey").unwrap();
-
-    (rk_i_plus_1, ck_i)
 }

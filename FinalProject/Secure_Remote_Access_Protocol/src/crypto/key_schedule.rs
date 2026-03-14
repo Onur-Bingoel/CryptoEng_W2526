@@ -1,4 +1,6 @@
+use crate::crypto::hmac::compute_hmac;
 use hkdf::Hkdf;
+use image::EncodableLayout;
 use sha2::{Digest, Sha256};
 
 /// Type HKDF-SHA256
@@ -19,6 +21,20 @@ pub fn expand<const N: usize>(hk: &Hkdfsha256, info: &[u8]) -> Result<[u8; N], h
     Ok(out)
 }
 
+pub fn kdf_ck(ck_i: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let ck_i_plus_1 = compute_hmac(ck_i.as_bytes(), b"ChainKey");
+    let mk_i = compute_hmac(ck_i.as_bytes(), b"MessageKey");
+
+    (ck_i_plus_1, mk_i)
+}
+
+pub fn kdf_rk(rk_i: &[u8], dh: &[u8]) -> ([u8; 32], [u8; 32]) {
+    let (_, hk) = extract(Some(rk_i), dh);
+    let rk_i_plus_1 = expand::<32>(&hk, b"RootKey").unwrap();
+    let ck_i = expand::<32>(&hk, b"ChainKey").unwrap();
+
+    (rk_i_plus_1, ck_i)
+}
 
 pub fn derive_hs(shared_key: &[u8]) -> (hmac::digest::Output<Sha256>, Hkdfsha256) {
     let zero = [0u8; KEY_LEN];

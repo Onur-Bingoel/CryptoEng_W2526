@@ -114,6 +114,147 @@ mod tests {
         drop(stream);
         drop(listener);
     }
+
+    #[test]
+    fn test_wrong_password_and_username() {
+        let mut ca = CA::new();
+        let mut ca_clone = ca.clone();
+        let mut g: ProjectivePoint = ProjectivePoint::random(&mut OsRng);
+
+        let handle = std::thread::spawn(move || {
+            sim_google_for_error_case(&mut ca_clone, &mut g);
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        let mut stream = TcpStream::connect("127.0.0.1:9002").unwrap();
+        let mut aead_nonce: [u8; 12] = [0u8; 12];
+
+        let ad = b"Alice,Google,";
+        let username = "alice";
+        let pw = "12345";
+        let wrong_username = "alice2";
+        let wrong_pw = "123456";
+
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = pq_tls(&mut stream, &mut ca, ad);
+        assert!(!client::opaque_register::register(k3_c, &mut stream, &mut aead_nonce, &ad, &username, &pw));
+
+        // login return true if an error occurred
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, &mut ca, ad);
+        assert!(client::opaque_login::login(k3_c, k3_s, &mut stream, &mut aead_nonce, &ad, g, &username, &wrong_pw));
+        User::send_bytes(&mut stream, &Message::Reset {});
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, &mut ca, ad);
+        assert!(client::opaque_login::login(k3_c, k3_s, &mut stream, &mut aead_nonce, &ad, g, &wrong_username, &pw));
+
+        drop(stream);
+
+        handle.join().unwrap();
+
+        println!("Test register_and_login finished.\n\n");
+    }
+
+    fn sim_google_for_error_case(ca: &mut CA, g: &mut ProjectivePoint) {
+        let listener = TcpListener::bind("127.0.0.1:9002").unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+
+        let mut aead_nonce: [u8; 12] = [0u8; 12];
+        let ad = b"Alice,Google,";
+        let mut database: HashMap<Vec<u8>, DatabaseContent> = HashMap::new();
+
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, _k3_s) = server::pqtls::pq_tls(&mut stream, ca, ad);
+
+        let msg = User::recv_bytes(&mut stream);
+        let (nonce, aead_payload) = match msg {
+            Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
+            _ => panic!("Google: Unexpected message"),
+        };
+        let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Google: Decrypt error: {e}");
+                return;
+            }
+        };
+        let mut parts = decrypted_msg.splitn(3, |&b| b == b';');
+        let _action = parts.next().unwrap_or(&[]);
+        let mut username = parts.next().unwrap_or(&[]);
+        let mut content = parts.next().unwrap_or(&[]);
+
+        assert!(!server::opaque_register::register(
+            &mut aead_nonce,
+            &ad,
+            &mut database,
+            *g,
+            &mut username,
+            &mut content
+        ));
+
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = server::pqtls::pq_tls(&mut stream, ca, ad);
+
+        let msg = User::recv_bytes(&mut stream);
+        let (nonce, aead_payload) = match msg {
+            Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
+            _ => panic!("Google: Unexpected message"),
+        };
+        let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Google: Decrypt error: {e}");
+                return;
+            }
+        };
+        let mut parts = decrypted_msg.splitn(3, |&b| b == b';');
+        let _action = parts.next().unwrap_or(&[]);
+        let mut username = parts.next().unwrap_or(&[]);
+        let mut content = parts.next().unwrap_or(&[]);
+
+        assert!(server::opaque_login::login(
+            k3_c,
+            k3_s,
+            &mut stream,
+            &mut aead_nonce,
+            &ad,
+            &mut database,
+            *g,
+            &mut username,
+            &mut content
+        ));
+
+        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = server::pqtls::pq_tls(&mut stream, ca, ad);
+
+        let msg = User::recv_bytes(&mut stream);
+        let (nonce, aead_payload) = match msg {
+            Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
+            _ => panic!("Google: Unexpected message"),
+        };
+        let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Google: Decrypt error: {e}");
+                return;
+            }
+        };
+        let mut parts = decrypted_msg.splitn(3, |&b| b == b';');
+        let _action = parts.next().unwrap_or(&[]);
+        let mut username = parts.next().unwrap_or(&[]);
+        let mut content = parts.next().unwrap_or(&[]);
+
+        assert!(server::opaque_login::login(
+            k3_c,
+            k3_s,
+            &mut stream,
+            &mut aead_nonce,
+            &ad,
+            &mut database,
+            *g,
+            &mut username,
+            &mut content
+        ));
+        User::send_bytes(&mut stream, &Message::Reset {});
+
+        drop(stream);
+        drop(listener);
+    }
     
     #[test]
     fn test_double_ratchet() {
@@ -140,7 +281,7 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(500));
 
-        let mut stream = TcpStream::connect("127.0.0.1:9002").unwrap();
+        let mut stream = TcpStream::connect("127.0.0.1:9003").unwrap();
         let mut rk_i = sk;
         let mut large_y_i = g * y_i;
         let aead_nonce = &mut [0u8; 12];
@@ -175,7 +316,7 @@ mod tests {
     }
 
     fn sim_google_ratchet(g: &mut ProjectivePoint, sk: &mut Output<Sha256>, x_i: &mut Scalar, y_i: &mut Scalar, k3_c: &[u8; 32], k3_s: &[u8; 32], message_1_from_user: &str, message_2_from_user: &str) {
-        let listener = TcpListener::bind("127.0.0.1:9002").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:9003").unwrap();
         let (mut stream, _) = listener.accept().unwrap();
         let aead_nonce = &mut [0u8; 12];
         OsRng.fill_bytes(aead_nonce);
@@ -214,7 +355,7 @@ mod tests {
         let mut ca_clone = ca.clone();
 
         let handle = std::thread::spawn(move || {
-            let listener = TcpListener::bind("127.0.0.1:9003").unwrap();
+            let listener = TcpListener::bind("127.0.0.1:9004").unwrap();
             let (mut stream, _) = listener.accept().unwrap();
             let (k1_c, k1_s, k2_c, k2_s, k3_c, k3_s) = server::pqtls::pq_tls(&mut stream, &mut ca_clone, ad);
 
@@ -226,7 +367,7 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(500));
 
-        let mut stream = TcpStream::connect("127.0.0.1:9003").unwrap();
+        let mut stream = TcpStream::connect("127.0.0.1:9004").unwrap();
 
         let (alice_k1_c, alice_k1_s, alice_k2_c, alice_k2_s, alice_k3_c, alice_k3_s) = client::pqtls::pq_tls(&mut stream, &mut ca, ad);
 

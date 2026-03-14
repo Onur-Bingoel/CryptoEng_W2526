@@ -2,19 +2,15 @@ use crate::crypto;
 use crate::crypto::hmac::{compute_hmac, verify_hmac};
 use crate::crypto::participant::{DatabaseContent, Message, User};
 use crate::server::double_ratchet::double_ratchet_iteration;
-use crate::server::google;
+use crate::server::google::{decrypt, encrypt, println, reconstruct_aead_message};
 use aes_gcm::aead::OsRng;
 use elliptic_curve::group::GroupEncoding;
 use elliptic_curve::Field;
-use hmac::digest::Digest;
 use image::EncodableLayout;
 use k256::{ProjectivePoint, Scalar};
 use rand_core::RngCore;
 use std::collections::HashMap;
 use std::net::TcpStream;
-use std::panic;
-use std::sync::atomic::Ordering;
-use crate::server::google::println;
 
 pub(crate) fn login(
     k3_c: [u8; 32],
@@ -49,12 +45,9 @@ pub(crate) fn login(
     msg.extend_from_slice(saved_data.enc_client_keys.as_slice());
     msg.extend_from_slice(saved_data.aead_nonce.as_bytes());
     OsRng.fill_bytes(aead_nonce);
-    let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Encrypt error: {e}");
-            return true;
-        }
+    let cypher_text = match encrypt(&k3_s, &aead_nonce, &ad, msg) {
+        Ok(value) => value,
+        Err(value) => return value,
     };
     let msg = Message::AeadCiphertext {
         nonce: *aead_nonce,
@@ -75,26 +68,13 @@ pub(crate) fn login(
     // Receive ephemeral_pk key from Alice
     println("Google: Waiting for ephemeral_pk from Alice");
     let msg = User::recv_bytes(&mut stream);
-    let (nonce, aead_payload) = match msg {
-        Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
-        _ => {
-            match msg {
-                Message::Reset {} => (),
-                _ => {
-                    eprintln!("Google: Unexpected message");
-                    return true;
-                }
-            }
-            google::RECEIVED_RESET.store(true, Ordering::Relaxed);
-            panic!("Google: Unexpected message")
-        },
+    let (nonce, aead_payload) = match reconstruct_aead_message(msg) {
+        Ok(value) => value,
+        Err(value) => return value,
     };
-    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Decrypt error: {e}");
-            return true;
-        }
+    let decrypted_msg = match decrypt(&k3_c, &ad, &nonce, &aead_payload) {
+        Ok(value) => value,
+        Err(value) => return value,
     };
     let large_x: ProjectivePoint = ProjectivePoint::from_bytes(decrypted_msg.as_slice().try_into().unwrap()).unwrap();
 
@@ -103,12 +83,9 @@ pub(crate) fn login(
     let mut msg = Vec::new();
     msg.extend_from_slice((g * y).to_bytes().as_bytes());
     OsRng.fill_bytes(aead_nonce);
-    let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Encrypt error: {e}");
-            return true;
-        }
+    let cypher_text = match encrypt(&k3_s, &aead_nonce, &ad, msg) {
+        Ok(value) => value,
+        Err(value) => return value,
     };
     let msg = Message::AeadCiphertext {
         nonce: *aead_nonce,
@@ -139,37 +116,21 @@ pub(crate) fn login(
     // Receive mac_c from Alice
     println("Google: Waiting for mac_c from Alice");
     let msg = User::recv_bytes(&mut stream);
-    let (nonce, aead_payload) = match msg {
-        Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
-        _ => {
-            match msg {
-                Message::Reset {} => (),
-                _ => {
-                    eprintln!("Google: Unexpected message");
-                    return true;
-                }
-            }
-            google::RECEIVED_RESET.store(true, Ordering::Relaxed);
-            panic!("Google: Unexpected message")
-        },
+    let (nonce, aead_payload) = match reconstruct_aead_message(msg) {
+        Ok(value) => value,
+        Err(value) => return value,
     };
-    let mac_c: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &aead_payload, &ad.as_ref()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Decrypt error: {e}");
-            return true;
-        }
+    let mac_c = match decrypt(&k3_c, &ad, &nonce, &aead_payload) {
+        Ok(value) => value,
+        Err(value) => return value,
     };
 
     // Send mac_s to Alice
     println("Google: Sending mac_s to Alice");
     OsRng.fill_bytes(aead_nonce);
-    let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, mac_s.as_bytes(), &ad.to_vec()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Google: Encrypt error: {e}");
-            return true;
-        }
+    let cypher_text = match encrypt(&k3_s, &aead_nonce, &ad, mac_s) {
+        Ok(value) => value,
+        Err(value) => return value,
     };
     let msg = Message::AeadCiphertext {
         nonce: *aead_nonce,

@@ -3,7 +3,7 @@ use crate::crypto::participant::{DatabaseContent, Message, User, CA};
 use crate::server::opaque_login::login;
 use crate::server::opaque_register::register;
 use crate::server::pqtls::pq_tls;
-use hmac::digest::Digest;
+use image::EncodableLayout;
 use k256::ProjectivePoint;
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream};
@@ -16,11 +16,12 @@ pub(crate) static DISABLE_PRINT: AtomicBool = AtomicBool::new(false);
 pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
     let listener = TcpListener::bind("127.0.0.1:9000").unwrap();
     let (mut stream, _) = listener.accept().unwrap();
+    let mut database: HashMap<Vec<u8>, DatabaseContent> = HashMap::new();
     loop {
         panic::set_hook(Box::new(|_| {
         }));
         match panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            match google_inner(ca, group_element, &mut stream) {
+            match google_inner(ca, group_element, &mut stream, &mut database) {
                 _ => panic!("Google: Error in google_inner"),
             }
         })) {
@@ -35,10 +36,9 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
     }
 }
 
-pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream: &mut TcpStream) {
+pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream: &mut TcpStream, mut database: &mut HashMap<Vec<u8>, DatabaseContent>) {
     let mut aead_nonce: [u8; 12] = [0u8; 12];
     let ad = b"Alice,Google,";
-    let mut database: HashMap<Vec<u8>, DatabaseContent> = HashMap::new();
     let g = group_element.clone();
 
     loop {
@@ -110,6 +110,47 @@ pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream
         }
 
     }
+}
+
+pub fn reconstruct_aead_message(msg: Message) -> Result<([u8; 12], Vec<u8>), bool> {
+    let (nonce, aead_payload) = match msg {
+        Message::AeadCiphertext { nonce, aead_payload } => (nonce, aead_payload),
+        _ => {
+            match msg {
+                Message::Reset {} => (),
+                _ => {
+                    eprintln!("Google: Unexpected message");
+                    return Err(true);
+                }
+            }
+            RECEIVED_RESET.store(true, Ordering::Relaxed);
+            // panic!("Google: Unexpected message")
+            return Err(true);
+        },
+    };
+    Ok((nonce, aead_payload))
+}
+
+pub fn encrypt(k3_s: &[u8; 32], aead_nonce: &&mut [u8; 12], ad: &&&[u8; 13], msg: Vec<u8>) -> Result<Vec<u8>, bool> {
+    let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_s, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Google: Encrypt error: {e}");
+            return Err(true);
+        }
+    };
+    Ok(cypher_text)
+}
+
+pub fn decrypt(k3_c: &[u8; 32], ad: &&&[u8; 13], nonce: &[u8; 12], ciphertext: &Vec<u8>) -> Result<Vec<u8>, bool> {
+    let decrypted_msg: Vec<u8> = match crypto::aead::decrypt(&k3_c, &nonce, &ciphertext, &ad.as_ref()) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Google: Decrypt error: {e}");
+            return Err(true);
+        }
+    };
+    Ok(decrypted_msg)
 }
 
 pub(crate) fn println(text: &str) {

@@ -2,7 +2,6 @@ use crate::client::alice::alice;
 use crate::crypto::participant;
 use crate::server::google;
 use crate::server::google::google;
-use elliptic_curve::Group;
 use inquire::Select;
 use k256::ProjectivePoint;
 
@@ -15,7 +14,7 @@ fn main() {
     let mut ca = participant::CA::new();
     let mut g: ProjectivePoint = ProjectivePoint::default();
 
-    let options = vec!["Server", "Client", "Automatic"];
+    let options = vec!["Server", "Client", "Both"];
     let selection = Select::new("What do you want to start?", options.clone()).prompt();
 
 
@@ -24,7 +23,7 @@ fn main() {
             match choice {
                 "Server" => google(&mut ca, &mut g),
                 "Client" => alice(&mut ca, &mut g),
-                "Automatic" => {
+                "Both" => {
                     google::DISABLE_PRINT.store(true, std::sync::atomic::Ordering::Relaxed);
                     let mut ca_clone = ca.clone();
                     let handle = std::thread::spawn(move || {

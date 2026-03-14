@@ -1,10 +1,7 @@
-use crate::crypto;
+use crate::client::alice::encrypt;
 use crate::crypto::participant::{Message, User};
 use aes_gcm::aead::OsRng;
-use image::EncodableLayout;
-use ml_kem::EncodedSizeUser;
 use rand_core::RngCore;
-use sha2::Digest;
 use std::net::TcpStream;
 
 pub(crate) fn register(
@@ -27,12 +24,9 @@ pub(crate) fn register(
         msg.extend_from_slice(b";");
         msg.extend_from_slice(pw);
         OsRng.fill_bytes(aead_nonce);
-        let cypher_text: Vec<u8> = match crypto::aead::encrypt(&k3_c, &aead_nonce, msg.as_bytes(), &ad.to_vec()) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("Alice: Encrypt error: {e}");
-                return true;
-            }
+        let cypher_text = match encrypt(&k3_c, &aead_nonce, &ad, msg) {
+            Ok(value) => value,
+            Err(value) => return value,
         };
         let msg = Message::AeadCiphertext {
             nonce: *aead_nonce,
