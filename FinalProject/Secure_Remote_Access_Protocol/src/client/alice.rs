@@ -14,12 +14,15 @@ pub(crate) static RECEIVED_RESET: AtomicBool = AtomicBool::new(false);
 
 pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     let mut stream = TcpStream::connect("127.0.0.1:9000").unwrap();
+    // Establish TLS connection
+    let ad = b"Alice,Google,";
+    println!("Alice: Establishing TLS connection");
+    let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
+    println!("Alice: TLS connection established");
     loop {
-        panic::set_hook(Box::new(|_| {
-        }));
         match panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            match alice_inner(ca, group_element, &mut stream) {
-                _ => panic!("Alice: Error in alice_inner"),
+            match alice_inner(ca, group_element, &mut stream, &k3_c, &k3_s, ad) {
+                _ => eprintln!("Alice: Error in alice_inner"),
             }
         })) {
             _ => {
@@ -33,9 +36,9 @@ pub fn alice(ca: &mut CA, group_element: &mut ProjectivePoint) {
     }
 }
 
-pub fn alice_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream: &mut TcpStream) {
+pub fn alice_inner(_ca: &mut CA, group_element: &mut ProjectivePoint, mut stream: &mut TcpStream, k3_c: &[u8; 32], k3_s: &[u8; 32], ad: &[u8; 13]) {
     let mut aead_nonce: [u8; 12] = [0u8; 12];
-    let ad = b"Alice,Google,";
+    // let ad = b"Alice,Google,";
     let g = group_element.clone();
     let options = vec!["Login", "Register"];
 
@@ -55,20 +58,20 @@ pub fn alice_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream:
             .expect("Error reading password");
 
         // Establish TLS connection
-        println!("Alice: Establishing TLS connection");
-        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
-        println!("Alice: TLS connection established");
+        // println!("Alice: Establishing TLS connection");
+        // let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
+        // println!("Alice: TLS connection established");
 
         match selection {
             Ok(choice) => {
                 match choice {
                     "Login" => {
                         if login(
-                            k3_c, 
-                            k3_s, 
+                            *k3_c,
+                            *k3_s,
                             &mut stream,
                             &mut aead_nonce,
-                            &ad, 
+                            &ad,
                             g,
                             &username,
                             &pw
@@ -79,7 +82,7 @@ pub fn alice_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream:
                     },
                     "Register" => {
                         if register(
-                            k3_c,
+                            *k3_c,
                             &mut stream, 
                             &mut aead_nonce,
                             &ad, 
@@ -113,7 +116,7 @@ pub fn reconstruct_aead_message(msg: Message) -> Result<([u8; 12], Vec<u8>), boo
                 }
             }
             RECEIVED_RESET.store(true, Ordering::Relaxed);
-            // panic!("Alice: Unexpected message")
+            eprintln!("Alice: Unexpected message");
             return Err(true);
         },
     };

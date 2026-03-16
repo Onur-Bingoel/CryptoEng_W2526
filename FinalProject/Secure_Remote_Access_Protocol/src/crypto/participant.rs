@@ -20,8 +20,10 @@ pub enum Message {
         nonce: [u8; 12],
         aead_payload: Vec<u8>,
     },
-    SimplePayload {
-        payload: Vec<u8>,
+    DoubleRatchetPayload {
+        nonce: [u8; 12],
+        ciphertext: Vec<u8>,
+        public_key: Vec<u8>,
     },
     Reset {},
 }

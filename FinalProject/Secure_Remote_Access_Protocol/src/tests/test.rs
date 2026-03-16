@@ -292,10 +292,6 @@ mod tests {
         println!("Testing double_ratchet");
 
         let ad = b"Alice,Google,";
-        let mut k3_c = [0u8; 32];
-        OsRng.fill_bytes(&mut k3_c);
-        let mut k3_s = [0u8; 32];
-        OsRng.fill_bytes(&mut k3_s);
         let mut g: ProjectivePoint = ProjectivePoint::random(&mut OsRng);
         
         let len = 16;
@@ -310,7 +306,7 @@ mod tests {
 
         // start Google server in a separate thread
         let handle = std::thread::spawn(move || {
-            sim_google_ratchet(&mut g, &mut sk, &mut x_i, &mut y_i, &k3_c.clone(), &k3_s.clone(), message_1_from_user, message_2_from_user);
+            sim_google_ratchet(&mut g, &mut sk, &mut x_i, &mut y_i, message_1_from_user, message_2_from_user);
         });
 
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -323,7 +319,7 @@ mod tests {
 
         // start first double_ratchet iteration with first message
         let (x_i_plus_1, large_y_plus_one, rk_i_plus_2, output) =
-            match client::double_ratchet::double_ratchet_iteration(&mut&mut stream, aead_nonce, &&ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_1_from_user) {
+            match client::double_ratchet::double_ratchet_iteration(&mut&mut stream, aead_nonce, &&ad, g, rk_i, large_y_i, message_1_from_user) {
             Ok(value) => value,
             Err(value) => panic!("Alice: Error in inner_double_ratchet: {value}"),
         };
@@ -336,7 +332,7 @@ mod tests {
 
         // start second double_ratchet iteration with second message
         let (x_i_plus_2, large_y_plus_two, rk_i_plus_4, output_2) =
-        match client::double_ratchet::double_ratchet_iteration(&mut&mut stream, aead_nonce, &&ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_2_from_user) {
+        match client::double_ratchet::double_ratchet_iteration(&mut&mut stream, aead_nonce, &&ad, g, rk_i, large_y_i, message_2_from_user) {
             Ok(value) => value,
             Err(value) => panic!("Alice: Error in inner_double_ratchet: {value}"),
         };
@@ -355,7 +351,7 @@ mod tests {
         println!("-------------------------------------------------------\n\n");
     }
 
-    fn sim_google_ratchet(g: &mut ProjectivePoint, sk: &mut Output<Sha256>, x_i: &mut Scalar, y_i: &mut Scalar, k3_c: &[u8; 32], k3_s: &[u8; 32], message_1_from_user: &str, message_2_from_user: &str) {
+    fn sim_google_ratchet(g: &mut ProjectivePoint, sk: &mut Output<Sha256>, x_i: &mut Scalar, y_i: &mut Scalar, message_1_from_user: &str, message_2_from_user: &str) {
         // simulate Google server for double_ratchet test
         let listener = TcpListener::bind("127.0.0.1:9003").unwrap();
         let (mut stream, _) = listener.accept().unwrap();
@@ -368,7 +364,7 @@ mod tests {
         let y_i = y_i;
 
         // start first double_ratchet iteration with first message
-        let (large_x_plus_one, y_i_plus_1, mut rk_i_plus_2, output) = match server::double_ratchet::double_ratchet_iteration(&k3_c, &k3_s, &mut &mut stream, aead_nonce, &&ad, *g, *rk_i, *y_i) {
+        let (large_x_plus_one, y_i_plus_1, mut rk_i_plus_2, output) = match server::double_ratchet::double_ratchet_iteration(&mut &mut stream, aead_nonce, &&ad, *g, *rk_i, *y_i) {
             Ok(value) => value,
             Err(value) => panic!("Google: Error in inner_double_ratchet: {value}"),
         };
@@ -381,7 +377,7 @@ mod tests {
         *y_i = y_i_plus_1;
 
         // start second double_ratchet iteration with second message
-        let (_, _, _, output_2) = match server::double_ratchet::double_ratchet_iteration(&k3_c, &k3_s, &mut &mut stream, aead_nonce, &&ad, *g, *rk_i, *y_i) {
+        let (_, _, _, output_2) = match server::double_ratchet::double_ratchet_iteration(&mut &mut stream, aead_nonce, &&ad, *g, *rk_i, *y_i) {
             Ok(value) => value,
             Err(value) => panic!("Google: Error in inner_double_ratchet: {value}"),
         };

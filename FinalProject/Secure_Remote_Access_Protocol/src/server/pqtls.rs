@@ -52,7 +52,9 @@ pub(crate) fn pq_tls(
 
     // Generate key pair and calculate shared key and ciphertext
     println("Google: Generating key pair and calculating shared key and ciphertext");
-    let key_pair = MlDsa65::from_seed(&Seed::default());
+    let mut seed = Seed::default();
+    OsRng.fill_bytes(seed.as_mut());
+    let key_pair = MlDsa65::from_seed(&seed);
     let (ct, shared_key) = ek.encapsulate(&mut OsRng).unwrap();
 
     // Calculate K1_c, K1_s, K2_c, K2_s

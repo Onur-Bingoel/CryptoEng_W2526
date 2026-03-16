@@ -67,7 +67,7 @@ pub(crate) fn login(
         Ok(value) => value,
         Err(value) => return value,
     };
-    if decrypted_msg.len() < 114 {
+    if decrypted_msg.len() < 114 { // TODO: find more elegant solution
         eprintln!("Alice: Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
         return true;
     }
@@ -200,7 +200,7 @@ pub(crate) fn login(
             .expect("Error reading message_from_user");
         let message_from_user = message_from_user.trim();
 
-        let (x_i_plus_1, large_y_plus_one, rk_i_plus_2, _) = match double_ratchet_iteration(&mut stream, aead_nonce, &ad, g, &k3_c, &k3_s, rk_i, large_y_i, message_from_user) {
+        let (x_i_plus_1, large_y_plus_one, rk_i_plus_2, _) = match double_ratchet_iteration(&mut stream, aead_nonce, &ad, g, rk_i, large_y_i, message_from_user) {
             Ok(value) => value,
             Err(value) => return value,
         };

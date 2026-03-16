@@ -17,12 +17,15 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
     let listener = TcpListener::bind("127.0.0.1:9000").unwrap();
     let (mut stream, _) = listener.accept().unwrap();
     let mut database: HashMap<Vec<u8>, DatabaseContent> = HashMap::new();
+    // Establish TLS connection
+    let ad = b"Alice,Google,";
+    println("Google: Establishing TLS connection");
+    let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
+    println("Google: TLS connection established.");
     loop {
-        panic::set_hook(Box::new(|_| {
-        }));
         match panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            match google_inner(ca, group_element, &mut stream, &mut database) {
-                _ => panic!("Google: Error in google_inner"),
+            match google_inner(ca, group_element, &mut stream, &mut database, &k3_c, &k3_s, ad) {
+                _ => eprintln!("Google: Error in google_inner"),
             }
         })) {
             _ => {
@@ -36,16 +39,16 @@ pub fn google(ca: &mut CA, group_element: &mut ProjectivePoint) {
     }
 }
 
-pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream: &mut TcpStream, mut database: &mut HashMap<Vec<u8>, DatabaseContent>) {
+pub fn google_inner(_ca: &mut CA, group_element: &mut ProjectivePoint, mut stream: &mut TcpStream, mut database: &mut HashMap<Vec<u8>, DatabaseContent>, k3_c: &[u8; 32], k3_s: &[u8; 32], ad: &[u8; 13]) {
     let mut aead_nonce: [u8; 12] = [0u8; 12];
-    let ad = b"Alice,Google,";
+    // let ad = b"Alice,Google,";
     let g = group_element.clone();
 
     loop {
         // Establish TLS connection
-        println("Google: Establishing TLS connection");
-        let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
-        println("Google: TLS connection established.");
+        // println("Google: Establishing TLS connection");
+        // let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
+        // println("Google: TLS connection established.");
 
         // Receive message from Alice
         println("Google: Waiting for message from Alice");
@@ -91,8 +94,8 @@ pub fn google_inner(ca: &mut CA, group_element: &mut ProjectivePoint, mut stream
             }
         } else if action == b"Login" {
             if login(
-                k3_c,
-                k3_s,
+                *k3_c,
+                *k3_s,
                 &mut stream,
                 &mut aead_nonce,
                 &ad,
@@ -124,7 +127,7 @@ pub fn reconstruct_aead_message(msg: Message) -> Result<([u8; 12], Vec<u8>), boo
                 }
             }
             RECEIVED_RESET.store(true, Ordering::Relaxed);
-            // panic!("Google: Unexpected message")
+            eprintln!("Google: Unexpected message");
             return Err(true);
         },
     };

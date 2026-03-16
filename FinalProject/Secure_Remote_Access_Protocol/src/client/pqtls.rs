@@ -96,7 +96,7 @@ pub(crate) fn pq_tls(
         }
     };
 
-    let mac_len = 32;
+    let mac_len = 32; // TODO: find more elegant solution
     let mac_start = decrypted_msg.len() - mac_len;
     let google_mac: Vec<u8> = decrypted_msg[mac_start..].to_vec();
 

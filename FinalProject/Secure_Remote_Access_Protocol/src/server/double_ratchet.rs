@@ -1,6 +1,6 @@
 use crate::crypto::key_schedule::{kdf_ck, kdf_rk};
 use crate::crypto::participant::{Message, User};
-use crate::server::google::{decrypt, encrypt, println, reconstruct_aead_message};
+use crate::server::google::{decrypt, encrypt, println, RECEIVED_RESET};
 use aes_gcm::aead::OsRng;
 use elliptic_curve::group::GroupEncoding;
 use elliptic_curve::Field;
@@ -10,10 +10,9 @@ use k256::{ProjectivePoint, Scalar};
 use rand_core::RngCore;
 use sha2::Sha256;
 use std::net::TcpStream;
+use std::sync::atomic::Ordering;
 
 pub(crate) fn double_ratchet_iteration(
-    k3_c: &[u8; 32],
-    k3_s: &[u8; 32],
     mut stream: &mut &mut TcpStream,
     aead_nonce: &mut [u8; 12],
     ad: &&&[u8; 13],
@@ -24,21 +23,22 @@ pub(crate) fn double_ratchet_iteration(
     // Receive large_x_i_plus_one and c1 from Alice
     println("Google: Waiting for X_i+1 and c1 from Alice");
     let msg = User::recv_bytes(&mut stream);
-    let (nonce, aead_payload) = match reconstruct_aead_message(msg) {
-        Ok(value) => value,
-        Err(value) => return Err(value),
+    let (nonce, c1, large_x_plus_one_as_bytes) = match msg {
+        Message::DoubleRatchetPayload {nonce, ciphertext, public_key} => (nonce, ciphertext, public_key),
+        _ => {
+            match msg {
+                Message::Reset {} => (),
+                _ => {
+                    eprintln!("Google: Unexpected message");
+                    return Err(true);
+                }
+            }
+            RECEIVED_RESET.store(true, Ordering::Relaxed);
+            eprintln!("Google: Unexpected message");
+            return Err(true);
+        },
     };
-    let decrypted_msg = match decrypt(&k3_c, &ad, &nonce, &aead_payload) {
-        Ok(value) => value,
-        Err(value) => return Err(value),
-    };
-    if decrypted_msg.len() < 45 {
-        eprintln!("Google: Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
-        return Err(true);
-    }
-    let (nonce_and_large_x_plus_one_as_bytes, c1) = decrypted_msg.split_at(45);
-    let (nonce, large_x_plus_one_as_bytes) = nonce_and_large_x_plus_one_as_bytes.split_at(12);
-    let large_x_plus_one = ProjectivePoint::from_bytes(large_x_plus_one_as_bytes.into()).unwrap();
+    let large_x_plus_one = ProjectivePoint::from_bytes(large_x_plus_one_as_bytes.as_bytes().into()).unwrap();
 
     // Recover the chains
     println("Google: Recovering chains");
@@ -71,18 +71,10 @@ pub(crate) fn double_ratchet_iteration(
 
     // Send large_y_i_plus_one and c1 to Alice
     println("Google: Sending Y_i+1 and c1 to Alice");
-    let mut msg = Vec::new();
-    msg.extend_from_slice(aead_nonce.as_bytes());
-    msg.extend_from_slice((g * y_i_plus_1).to_bytes().as_bytes());
-    msg.extend_from_slice(c1.as_bytes());
-    OsRng.fill_bytes(aead_nonce);
-    let cypher_text = match encrypt(&k3_s, &aead_nonce, &ad, msg) {
-        Ok(value) => value,
-        Err(value) => return Err(value),
-    };
-    let msg = Message::AeadCiphertext {
+    let msg = Message::DoubleRatchetPayload {
         nonce: *aead_nonce,
-        aead_payload: cypher_text
+        ciphertext: c1,
+        public_key: (g * y_i_plus_1).to_bytes().as_bytes().to_vec(),
     };
     User::send_bytes(&mut stream, &msg);
 

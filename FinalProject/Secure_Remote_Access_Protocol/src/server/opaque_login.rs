@@ -160,7 +160,7 @@ pub(crate) fn login(
 
     #[cfg(not(test))]
     loop {
-        let (large_x_plus_one, y_i_plus_1, rk_i_plus_2, _) = match double_ratchet_iteration(&k3_c, &k3_s, &mut stream, aead_nonce, &ad, g, rk_i, y_i) {
+        let (large_x_plus_one, y_i_plus_1, rk_i_plus_2, _) = match double_ratchet_iteration(&mut stream, aead_nonce, &ad, g, rk_i, y_i) {
             Ok(value) => value,
             Err(value) => return value,
         };
