@@ -1,7 +1,7 @@
 use crate::crypto;
 use crate::crypto::hmac::{compute_hmac, verify_hmac};
 use crate::crypto::key_schedule::{key_schedule_1, key_schedule_2, key_schedule_3};
-use crate::crypto::participant::{Message, User, CA};
+use crate::crypto::participant::{Message, User, CA, MAC_LEN};
 use aes_gcm::aead::OsRng;
 use image::EncodableLayout;
 use kem::Decapsulate;
@@ -96,7 +96,7 @@ pub(crate) fn pq_tls(
         }
     };
 
-    let mac_len = 32; // TODO: find more elegant solution
+    let mac_len = MAC_LEN;
     let mac_start = decrypted_msg.len() - mac_len;
     let google_mac: Vec<u8> = decrypted_msg[mac_start..].to_vec();
 

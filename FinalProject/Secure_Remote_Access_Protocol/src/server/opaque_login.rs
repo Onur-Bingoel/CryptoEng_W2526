@@ -93,7 +93,7 @@ pub(crate) fn login(
     };
     User::send_bytes(&mut stream, &msg);
 
-    // 3DH-KServer (𝑏, 𝑦, 𝐴, 𝑋)
+    // 3DH-KServer 
     println("Google: Calculating SK");
     let mut key_input = Vec::new();
     key_input.extend_from_slice((large_x * lsk_s).to_bytes().as_bytes());
@@ -148,8 +148,8 @@ pub(crate) fn login(
     assert_eq!(mac_c.as_bytes(), expected_mac_c.as_bytes());
     println("Google: Valid MACs received.");
 
-    // End of login -----------------------------------------------------------------------------------------------------------
-    // Start communication -----------------------------------------------------------------------------------------------------------
+// End of login -----------------------------------------------------------------------------------------------------------
+// Start communication -----------------------------------------------------------------------------------------------------------
 
     // ----------- Double Ratchet -----------
     println("Google: Double Ratchet stage");

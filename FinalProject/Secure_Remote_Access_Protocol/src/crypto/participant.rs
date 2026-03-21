@@ -1,9 +1,9 @@
+use elliptic_curve::{ProjectivePoint, Scalar};
 use ml_dsa::{signature::Signer, KeyGen, KeyPair, MlDsa65, Seed, Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
-use elliptic_curve::{ProjectivePoint, Scalar};
 
 #[derive(Serialize, Deserialize)]
 pub enum Message {
@@ -27,6 +27,9 @@ pub enum Message {
     },
     Reset {},
 }
+
+pub const MAC_LEN: usize = 32;
+pub const ENC_CLIENT_KEYS_LEN: usize = 113;
 
 pub struct DatabaseContent {
     pub salt: Scalar<k256::Secp256k1>,

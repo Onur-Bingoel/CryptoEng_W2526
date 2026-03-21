@@ -45,11 +45,7 @@ pub fn google_inner(_ca: &mut CA, group_element: &mut ProjectivePoint, mut strea
     let g = group_element.clone();
 
     loop {
-        // Establish TLS connection
-        // println("Google: Establishing TLS connection");
-        // let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
-        // println("Google: TLS connection established.");
-
+        println("\n------------------------------------------------------------------\n");
         // Receive message from Alice
         println("Google: Waiting for message from Alice");
         let msg = User::recv_bytes(&mut stream);

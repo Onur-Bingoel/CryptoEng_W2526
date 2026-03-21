@@ -3,7 +3,7 @@ use crate::client::double_ratchet::double_ratchet_iteration;
 use crate::crypto;
 use crate::crypto::hash2curve::hash2curve_demo;
 use crate::crypto::hmac::{compute_hmac, verify_hmac};
-use crate::crypto::participant::{Message, User};
+use crate::crypto::participant::{Message, User, ENC_CLIENT_KEYS_LEN, MAC_LEN};
 use aes_gcm::aead::OsRng;
 use elliptic_curve::group::GroupEncoding;
 use elliptic_curve::hash2curve::ExpandMsgXmd;
@@ -67,13 +67,13 @@ pub(crate) fn login(
         Ok(value) => value,
         Err(value) => return value,
     };
-    if decrypted_msg.len() < 114 { // TODO: find more elegant solution
+    if decrypted_msg.len() < MAC_LEN + ENC_CLIENT_KEYS_LEN {
         eprintln!("Alice: Decrypt error: received malformed ratchet payload (len={})", decrypted_msg.len());
         return true;
     }
-    let (h_pw_as_bytes, rest_bytes) = decrypted_msg.split_at(33);
+    let (h_pw_as_bytes, rest_bytes) = decrypted_msg.split_at(MAC_LEN + 1);
     let h_pw_as = ProjectivePoint::from_bytes(h_pw_as_bytes.into()).unwrap();
-    let (enc_client_keys, enc_client_keys_nonce) = rest_bytes.split_at(114);
+    let (enc_client_keys, enc_client_keys_nonce) = rest_bytes.split_at(ENC_CLIENT_KEYS_LEN + 1);
 
     // Decrypt enc_client_keys and verify correctness
     println!("Alice: Decrypting client keys");
@@ -126,7 +126,7 @@ pub(crate) fn login(
     };
     let large_y: ProjectivePoint = ProjectivePoint::from_bytes(decrypted_msg.as_slice().try_into().unwrap()).unwrap();
 
-    // 3DH-KClient(𝑎, 𝑥, 𝐵, 𝑌)
+    // 3DH-KClient
     println!("Alice: Calculating SK");
     let mut key_input = Vec::new();
     key_input.extend_from_slice((lpk_s * x).to_bytes().as_bytes());
@@ -181,8 +181,8 @@ pub(crate) fn login(
     assert_eq!(mac_s.as_bytes(), expected_mac_s.as_bytes());
     println!("Alice: Valid MACs received.\n\n");
 
-    // End of login -----------------------------------------------------------------------------------------------------------
-    // Start communication -----------------------------------------------------------------------------------------------------------
+// End of login -----------------------------------------------------------------------------------------------------------
+// Start communication -----------------------------------------------------------------------------------------------------------
 
     // ----------- Double Ratchet -----------
     println!("Alice: Double Ratchet stage");

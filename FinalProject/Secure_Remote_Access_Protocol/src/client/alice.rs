@@ -57,11 +57,6 @@ pub fn alice_inner(_ca: &mut CA, group_element: &mut ProjectivePoint, mut stream
             .read_line(&mut pw)
             .expect("Error reading password");
 
-        // Establish TLS connection
-        // println!("Alice: Establishing TLS connection");
-        // let (_k1_c, _k1_s, _k2_c, _k2_s, k3_c, k3_s) = pq_tls(&mut stream, ca, ad);
-        // println!("Alice: TLS connection established");
-
         match selection {
             Ok(choice) => {
                 match choice {

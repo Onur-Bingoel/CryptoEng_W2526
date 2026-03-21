@@ -2,8 +2,11 @@ use crate::client::alice::alice;
 use crate::crypto::participant;
 use crate::server::google;
 use crate::server::google::google;
+use elliptic_curve::Group;
 use inquire::Select;
 use k256::ProjectivePoint;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 mod crypto;
 mod tests;
@@ -12,7 +15,9 @@ mod server;
 
 fn main() {
     let mut ca = participant::CA::new();
-    let mut g: ProjectivePoint = ProjectivePoint::default();
+    let seed = b"Alice, Google, conncetion_seed, ";
+    let mut rng = StdRng::from_seed(*seed);
+    let mut g: ProjectivePoint = ProjectivePoint::random(&mut rng);
 
     let options = vec!["Server", "Client", "Both"];
     let selection = Select::new("What do you want to start?", options.clone()).prompt();

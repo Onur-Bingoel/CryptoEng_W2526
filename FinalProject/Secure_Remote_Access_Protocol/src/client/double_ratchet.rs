@@ -10,6 +10,7 @@ use k256::{ProjectivePoint, Scalar};
 use sha2::Sha256;
 use std::net::TcpStream;
 use std::sync::atomic::Ordering;
+use rand_core::RngCore;
 
 pub(crate) fn double_ratchet_iteration(
     mut stream: &mut &mut TcpStream,
@@ -25,6 +26,7 @@ pub(crate) fn double_ratchet_iteration(
     let x_i_plus_1 = Scalar::random(&mut OsRng);
     let (rk_i_plus_1, ck_0) = kdf_rk(rk_i.as_bytes(), (large_y_i * x_i_plus_1).to_bytes().as_bytes());
     let (ck_1, mk_1) = kdf_ck(ck_0.as_bytes());
+    OsRng.fill_bytes(aead_nonce);
     let c1 = match encrypt(&mk_1.try_into().unwrap(), &aead_nonce, &ad, Vec::from(message_from_user.as_bytes())) {
         Ok(value) => value,
         Err(value) => return Err(value),
